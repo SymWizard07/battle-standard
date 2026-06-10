@@ -40,8 +40,11 @@ jobs:
 
       - name: Build
         env:
-          VITE_BASE_PATH: /Battle-Standard/
+          VITE_BASE_PATH: /battle-standard/
         run: npm run build
+
+      - name: Disable Jekyll processing
+        run: touch dist/.nojekyll
 
       - uses: actions/upload-pages-artifact@v3
         with:

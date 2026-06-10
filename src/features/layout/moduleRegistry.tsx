@@ -1,0 +1,69 @@
+import type { ComponentType } from 'react';
+import { SceneDeck } from '../scene-deck/SceneDeck';
+import { TokenLibraryPanel } from '../token-library/TokenLibraryPanel';
+import { ToolBar } from '../toolbar/ToolBar';
+import { ToolOptionsBar } from '../toolbar/ToolOptionsBar';
+import type { ModuleId } from './schema/layoutSchema';
+import { useLayoutModuleContext } from './LayoutModuleContext';
+import { CanvasModule } from './modules/CanvasModule';
+import { InfoModule, SessionHeaderModule } from './modules/SessionHeaderModule';
+
+function ScenesModule() {
+  const { device } = useLayoutModuleContext();
+  const compact = device !== 'desktop';
+  return (
+    <SceneDeck
+      variant={compact ? 'inline' : 'module'}
+      open={false}
+      onClose={() => {}}
+    />
+  );
+}
+
+function TokensModule() {
+  return (
+    <TokenLibraryPanel variant="module" open={false} onClose={() => {}} />
+  );
+}
+
+function ToolOptionsModule() {
+  return (
+    <div className="flex h-full min-h-11 items-center border-b border-slate-700 bg-slate-900/95 px-3">
+      <ToolOptionsBar className="min-h-11 min-w-0 flex-1 justify-end" />
+    </div>
+  );
+}
+
+function ToolbarModule() {
+  return (
+    <div className="shrink-0 border-t border-slate-700">
+      <ToolBar />
+    </div>
+  );
+}
+
+function CanvasModuleWrapper() {
+  return <CanvasModule />;
+}
+
+export const moduleRegistry: Record<ModuleId, ComponentType> = {
+  scenes: ScenesModule,
+  tokens: TokensModule,
+  toolOptions: ToolOptionsModule,
+  toolbar: ToolbarModule,
+  canvas: CanvasModuleWrapper,
+  sessionHeader: SessionHeaderModule,
+  info: InfoModule,
+};
+
+export function renderModule(moduleId: ModuleId): ComponentType {
+  return moduleRegistry[moduleId] ?? UnknownModule;
+}
+
+function UnknownModule() {
+  return (
+    <div className="flex h-full items-center justify-center bg-red-950/30 p-4 text-sm text-red-300">
+      Unknown module
+    </div>
+  );
+}

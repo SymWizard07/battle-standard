@@ -1,0 +1,42 @@
+{
+  "name": "battle-standard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run generate:icons && tsc && vite build",
+    "preview": "vite preview",
+    "test:history": "tsx src/lib/history/history.test.ts",
+    "generate:icons": "tsx scripts/generate-measure-icons.ts && tsx scripts/generate-fog-icons.ts && tsx scripts/generate-toolbar-overlays.ts && tsx scripts/generate-fog-noise.ts",
+    "download:status-icons": "tsx scripts/download-status-icons.ts",
+    "download:template-token-icons": "tsx scripts/download-template-token-icons.ts"
+  },
+  "dependencies": {
+    "dexie": "^4.0.11",
+    "konva": "^9.3.20",
+    "nanoid": "^5.1.5",
+    "polygon-clipping": "^0.15.7",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-konva": "^19.0.7",
+    "react-resizable-panels": "^4.11.2",
+    "react-router-dom": "^7.6.2",
+    "y-webrtc": "^10.3.0",
+    "yjs": "^13.6.27",
+    "zustand": "^5.0.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.8",
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "@vitejs/plugin-react": "^6.0.2",
+    "canvas": "^3.2.3",
+    "tailwindcss": "^4.1.8",
+    "tsx": "^4.22.3",
+    "typescript": "~6.0.2",
+    "vite": "^8.0.12"
+  },
+  "packageManager": "pnpm@11.3.0+sha512.2c403d6594527287672b1f7056343a1f7c3634036a67ffabfcc2b3d7595d843768f8787148d1b57cf7956c90606bbd192857c363af19e96d2d0ec9ec5741d215"
+}

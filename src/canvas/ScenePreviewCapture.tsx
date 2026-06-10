@@ -78,6 +78,7 @@ export function ScenePreviewCapture() {
               tokens={scene.tokens}
               assetUrls={assetUrls}
               selectedTokenIds={[]}
+              sessionSelectionColor="#94a3b8"
               movePreviewPositions={null}
               scalePreviewById={null}
               onTokenTap={() => {}}

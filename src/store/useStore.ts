@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { canEditToken } from '../sync/yjsProvider';
+import { canEditToken, canMoveToken, syncSelectionNow } from '../sync/syncProvider';
 import { createCampaign, createScene, TOKEN_COLORS } from '../lib/campaignFactory';
 import { colorForPlayerName, defaultPlayerColor, hueForPlayerName, snapHue } from '../lib/playerColor';
 import { isMapAssetId } from '../lib/campaignAssets';
@@ -223,7 +223,7 @@ export function getMovingTokenDropPayloads(
   const payloads: TokenLibraryDropPayload[] = [];
   for (const id of ids) {
     const token = scene.tokens.find((t) => t.id === id);
-    if (token && canEditToken(token)) {
+    if (token && canMoveToken(token)) {
       payloads.push({
         tokenId: token.id,
         name: token.name,
@@ -593,11 +593,13 @@ export const useStore = create<AppStore>((set, get) => ({
   setMapEditDragging: (v) => set({ mapEditDragging: v }),
   setGridVisible: (v) => set({ gridVisible: v }),
   setSelectSnap: (v) => set({ selectSnap: quantizeGridSnapStrength(v) }),
-  setSelectDrawShapes: (v) =>
+  setSelectDrawShapes: (v) => {
     set((s) => ({
       selectDrawShapes: v,
       selectedDrawStrokeIds: v ? s.selectedDrawStrokeIds : [],
-    })),
+    }));
+    syncSelectionNow();
+  },
   setDrawShape: (shape) => set({ drawShape: shape }),
   setDrawHue: (hue) => set({ drawHue: snapHue(hue) }),
   setDrawStrokeWidth: (width) =>
@@ -634,8 +636,9 @@ export const useStore = create<AppStore>((set, get) => ({
       movePreviewPositions: null,
       scalePreviewById: null,
     });
+    syncSelectionNow();
   },
-  selectTokens: (ids) =>
+  selectTokens: (ids) => {
     set({
       selectedTokenIds: ids,
       selectedMeasurementId: null,
@@ -644,8 +647,10 @@ export const useStore = create<AppStore>((set, get) => ({
       movePreviewPos: null,
       movePreviewPositions: null,
       scalePreviewById: null,
-    }),
-  toggleTokenInSelection: (id) =>
+    });
+    syncSelectionNow();
+  },
+  toggleTokenInSelection: (id) => {
     set((s) => {
       const has = s.selectedTokenIds.includes(id);
       const selectedTokenIds = has
@@ -660,8 +665,10 @@ export const useStore = create<AppStore>((set, get) => ({
         movePreviewPositions: null,
         scalePreviewById: null,
       };
-    }),
-  selectMeasurement: (id) =>
+    });
+    syncSelectionNow();
+  },
+  selectMeasurement: (id) => {
     set({
       selectedMeasurementId: id,
       selectedTokenIds: [],
@@ -670,8 +677,10 @@ export const useStore = create<AppStore>((set, get) => ({
       movePreviewPos: null,
       movePreviewPositions: null,
       scalePreviewById: null,
-    }),
-  selectDrawStroke: (id) =>
+    });
+    syncSelectionNow();
+  },
+  selectDrawStroke: (id) => {
     set({
       selectedDrawStrokeIds: id ? [id] : [],
       selectedTokenIds: [],
@@ -680,8 +689,10 @@ export const useStore = create<AppStore>((set, get) => ({
       movePreviewPos: null,
       movePreviewPositions: null,
       scalePreviewById: null,
-    }),
-  selectDrawStrokes: (ids) =>
+    });
+    syncSelectionNow();
+  },
+  selectDrawStrokes: (ids) => {
     set({
       selectedDrawStrokeIds: ids,
       selectedTokenIds: [],
@@ -690,8 +701,10 @@ export const useStore = create<AppStore>((set, get) => ({
       movePreviewPos: null,
       movePreviewPositions: null,
       scalePreviewById: null,
-    }),
-  toggleDrawStrokeInSelection: (id) =>
+    });
+    syncSelectionNow();
+  },
+  toggleDrawStrokeInSelection: (id) => {
     set((s) => {
       const has = s.selectedDrawStrokeIds.includes(id);
       const selectedDrawStrokeIds = has
@@ -706,7 +719,9 @@ export const useStore = create<AppStore>((set, get) => ({
         movePreviewPositions: null,
         scalePreviewById: null,
       };
-    }),
+    });
+    syncSelectionNow();
+  },
   setInteractionMode: (mode) => set({ interactionMode: mode }),
   setMovePreview: (pos) => set({ movePreviewPos: pos }),
   setMovePreviewPositions: (positions) => {
@@ -787,7 +802,7 @@ export const useStore = create<AppStore>((set, get) => ({
       get().fadeAndRemoveMeasurement(sceneId, m.id);
     }
   },
-  clearSelection: () =>
+  clearSelection: () => {
     set({
       selectedTokenIds: [],
       selectedMeasurementId: null,
@@ -798,7 +813,9 @@ export const useStore = create<AppStore>((set, get) => ({
       scalePreviewById: null,
       drawStrokeDragPreview: null,
       ephemeralMeasure: null,
-    }),
+    });
+    syncSelectionNow();
+  },
   duplicateSelection: (sceneId) => {
     const state = get();
     const scene = state.campaign?.scenes[sceneId];
@@ -810,7 +827,10 @@ export const useStore = create<AppStore>((set, get) => ({
         .filter((stroke): stroke is NonNullable<typeof stroke> => stroke != null);
       if (selected.length === 0) return false;
 
-      const copies = duplicateDrawStrokes(selected);
+      const copies = duplicateDrawStrokes(selected).map((stroke) => ({
+        ...stroke,
+        createdBy: currentMeasurementPinnedBy(state.role, state.playerName),
+      }));
       get().updateScene(sceneId, (s) => ({
         ...s,
         drawStrokes: [
@@ -1825,9 +1845,15 @@ export const useStore = create<AppStore>((set, get) => ({
     if (get().selectedMeasurementId === id) get().clearSelection();
   },
   addDrawStroke: (sceneId, stroke) => {
+    const state = get();
+    const authored = {
+      ...stroke,
+      createdBy:
+        stroke.createdBy ?? currentMeasurementPinnedBy(state.role, state.playerName),
+    };
     get().updateScene(sceneId, (s) => ({
       ...s,
-      drawStrokes: [...(s.drawStrokes ?? []), assignDrawStrokeMapLayer(stroke, s)],
+      drawStrokes: [...(s.drawStrokes ?? []), assignDrawStrokeMapLayer(authored, s)],
     }));
   },
   removeDrawStroke: (sceneId, id) => {

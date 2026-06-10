@@ -25,6 +25,7 @@ import type { GridCell, MapTransform, MeasureDisplayStyle, Point, TokenGridPlace
 import { resolveSceneEditTool } from '../lib/sceneEdit';
 import { hitMapLayerAt, referenceMapLayer, sceneMaps } from '../lib/sceneMaps';
 import { resolveMapLayerForWorldPoint, tokenAnchorWorld } from '../lib/mapObjectParent';
+import { useRemoteMotionDisplay } from '../hooks/useRemoteMotion';
 import { pinEphemeralMeasurement, useActiveScene, useStore, seesAsPlayer } from '../store/useStore';
 import { confirmAction } from '../features/confirm/confirmDialogStore';
 import { isWorldPointHiddenFromPlayer, isTokenPlacementHiddenFromPlayer } from '../lib/playerFogHit';
@@ -37,7 +38,12 @@ import { DrawStrokeEditOverlay } from './DrawStrokeEditOverlay';
 import { SnapControl } from './SnapControl';
 import { colorFromHue, defaultPlayerColor } from '../lib/playerColor';
 import type { DrawPreview } from '../lib/types';
-import { canEditFog, canEditToken } from '../sync/yjsProvider';
+import {
+  canEditFog,
+  canMoveToken,
+  canSessionMoveDrawStrokes,
+} from '../sync/syncProvider';
+import { PeerDrawSelectionOverlay } from './PeerDrawSelectionOverlay';
 import { filterTokensForViewer } from '../lib/tokenVisibility';
 import { DEFAULT_GRID_OFFSET, getGridOffset, GRID_SIZE_PX, setGridOffset } from '../lib/fixedGrid';
 import { loadImageDimensions } from '../lib/mapAlign';
@@ -121,6 +127,7 @@ export function MapViewport() {
   const setTokenDragOffMap = useStore((s) => s.setTokenDragOffMap);
   const setTokenLibraryDragOver = useStore((s) => s.setTokenLibraryDragOver);
   const ephemeralMeasure = useStore((s) => s.ephemeralMeasure);
+  const remoteMotion = useRemoteMotionDisplay();
   const alternatingDiagonals = useStore((s) => s.alternatingDiagonals);
   const fogMode = useStore((s) => s.fogMode);
   const fogBrushCells = useStore((s) => s.fogBrushCells);
@@ -503,7 +510,7 @@ export function MapViewport() {
       const starts: Record<string, TokenGridPlacement> = {};
       for (const id of useStore.getState().selectedTokenIds) {
         const t = scene.tokens.find((tok) => tok.id === id);
-        if (t && canEditToken(t)) {
+        if (t && canMoveToken(t)) {
           starts[id] = {
             gridPos: { ...t.gridPos },
             posOffset: t.posOffset ? { ...t.posOffset } : undefined,
@@ -524,7 +531,7 @@ export function MapViewport() {
       const ids = useStore.getState().selectedTokenIds;
       const hasEditable = ids.some((id) => {
         const t = scene.tokens.find((tok) => tok.id === id);
-        return t && canEditToken(t);
+        return t && canMoveToken(t);
       });
       if (!hasEditable) return;
       tokenDragPending.current = { screen: pointerScreen, world: pointerWorld };
@@ -594,7 +601,7 @@ export function MapViewport() {
       ...s,
       tokens: s.tokens.map((t) => {
         const placement = positions[t.id];
-        if (!placement || !canEditToken(t)) return t;
+        if (!placement || !canMoveToken(t)) return t;
         const next = {
           ...t,
           gridPos: placement.gridPos,
@@ -1553,6 +1560,7 @@ export function MapViewport() {
         .map((id) => currentScene.drawStrokes?.find((s) => s.id === id))
         .filter((stroke): stroke is NonNullable<typeof stroke> => stroke != null);
       if (strokes.length === 0) return;
+      if (!canSessionMoveDrawStrokes(selectedDrawStrokeIds)) return;
       updateDrawStrokes(activeSceneId, shiftDrawStrokes(strokes, { x: dx, y: dy }));
     };
 
@@ -1724,7 +1732,7 @@ export function MapViewport() {
       e.preventDefault();
       for (const id of useStore.getState().selectedTokenIds) {
         const token = scene.tokens.find((t) => t.id === id);
-        if (!token || !canEditToken(token)) continue;
+        if (!token || !canMoveToken(token)) continue;
         const start: TokenGridPlacement = {
           gridPos: token.gridPos,
           posOffset: token.posOffset ? { ...token.posOffset } : undefined,
@@ -1897,6 +1905,18 @@ export function MapViewport() {
             onDelete={() => confirmDeleteMapLayer(layer.id)}
           />
         ))}
+      {scene && (
+        <PeerDrawSelectionOverlay
+          strokes={scene.drawStrokes ?? []}
+          stagePos={stagePos}
+          viewScale={viewScale}
+          gridOffset={gridOffset}
+          showLocalMarquee={
+            selectedDrawStrokeIds.length > 0 &&
+            !(activeTool === 'select' && selectDrawShapes)
+          }
+        />
+      )}
       {activeTool === 'select' &&
         selectDrawShapes &&
         activeSceneId &&
@@ -2003,6 +2023,7 @@ export function MapViewport() {
           <MeasurementLayer
             measurements={scene.measurements}
             ephemeral={ephemeralMeasure}
+            remoteEphemeral={remoteMotion.ephemeralMeasure}
             alternatingDiagonals={alternatingDiagonals}
             debugDualView={measureDebugDualView}
             viewScale={viewScale}
@@ -2021,6 +2042,7 @@ export function MapViewport() {
           <MeasurementLabelsLayer
             measurements={scene.measurements}
             ephemeral={ephemeralMeasure}
+            remoteEphemeral={remoteMotion.ephemeralMeasure}
             alternatingDiagonals={alternatingDiagonals}
             viewScale={viewScale}
             fadingMeasurements={fadingMeasurements}

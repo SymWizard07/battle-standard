@@ -4,7 +4,7 @@ import { TOKEN_VITALITY_STATES } from '../../lib/tokenVitality';
 import { BloodiedStateIcon, DeadStateIcon } from './VitalityStateIcons';
 import { getTokenScreenCenter } from '../../canvas/layers/TokenLayer';
 import { primarySelectedTokenId, seesAsPlayer, useActiveScene, useLiveViewport, useStore } from '../../store/useStore';
-import { canEditToken } from '../../sync/yjsProvider';
+import { canEditToken } from '../../sync/syncProvider';
 import { tokenWorldTopLeft } from '../../lib/grid';
 import { GRID_SIZE_PX } from '../../lib/fixedGrid';
 import { MAX_TOKEN_FOOTPRINT_CELLS } from '../../lib/tokenScale';

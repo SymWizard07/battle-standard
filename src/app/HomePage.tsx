@@ -4,7 +4,6 @@ import { formatDocumentTitle, useDocumentTitle, APP_TITLE } from '../hooks/useDo
 import { deleteCampaign, listCampaigns } from '../lib/db';
 import type { Campaign } from '../lib/types';
 import { savePendingJoin } from '../sync/sessionReconnect';
-import { probeRoomHosted } from '../sync/roomProbe';
 import { createAndSetCampaign, useStore } from '../store/useStore';
 import { confirmAction } from '../features/confirm/confirmDialogStore';
 import { normalizeRoomCode } from '../lib/ids';
@@ -50,7 +49,6 @@ export function HomePage() {
   const [name, setName] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [joinError, setJoinError] = useState('');
-  const [joining, setJoining] = useState(false);
   const playerName = useStore((s) => s.playerName);
 
   const refresh = () => {
@@ -71,24 +69,15 @@ export function HomePage() {
     navigate(`/campaign/${c.id}`);
   };
 
-  const joinSession = async (codeOverride?: string) => {
+  const joinSession = (codeOverride?: string) => {
     const code = normalizeRoomCode(codeOverride ?? joinCode);
     const displayName = playerName.trim();
     if (!code || !displayName) return;
 
     setJoinError('');
-    setJoining(true);
-    const hosted = await probeRoomHosted(code);
-    setJoining(false);
-    if (!hosted) {
-      setJoinCode(code);
-      setJoinError('No hosted session found for that room code.');
-      return;
-    }
-
     useStore.getState().setPlayerName(displayName);
     const c = createAndSetCampaign(`Session ${code}`);
-    savePendingJoin({ roomCode: code, playerName: displayName, campaignId: c.id, hostVerified: true });
+    savePendingJoin({ roomCode: code, playerName: displayName, campaignId: c.id });
     setJoinCode('');
     refresh();
     navigate(`/campaign/${c.id}`);
@@ -164,12 +153,10 @@ export function HomePage() {
                   value={joinCode}
                   onChange={setJoinCode}
                   onEnter={() => void joinSession()}
-                  disabled={joining}
                 />
                 <button
                   type="button"
                   onClick={() => void pasteJoinCode()}
-                  disabled={joining}
                   className={iconButton}
                   aria-label="Paste room code"
                 >
@@ -178,10 +165,10 @@ export function HomePage() {
                 <button
                   type="button"
                   onClick={() => void joinSession()}
-                  disabled={joining || !playerName.trim() || !joinCode.trim()}
+                  disabled={!playerName.trim() || !joinCode.trim()}
                   className={`${actionButton} bg-slate-800/70 text-slate-100 backdrop-blur-sm hover:bg-slate-700/80 disabled:cursor-not-allowed disabled:opacity-40`}
                 >
-                  {joining ? 'Checking…' : 'Join'}
+                  Join
                 </button>
               </div>
               {joinError && <p className={fieldError}>{joinError}</p>}

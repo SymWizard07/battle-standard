@@ -1,5 +1,8 @@
 import { Circle, Group, Image, Line, Rect } from 'react-konva';
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
+import { usePeerTokenSelectionColors } from '../../hooks/usePeerSelections';
+import { useRemoteMotionDisplay } from '../../hooks/useRemoteMotion';
+import { defaultPlayerColor } from '../../lib/playerColor';
 import { useImageOpaqueShape } from '../../hooks/useImageOpaqueBounds';
 import { statusMeta } from '../../lib/statusEffects';
 import { BLOODIED_ICON } from '../../lib/tokenVitality';
@@ -93,6 +96,8 @@ interface Props {
   selectedTokenIds: string[];
   /** Ephemeral measure preview: token id → outline stroke color (does not select). */
   measureHighlightColors?: ReadonlyMap<string, string>;
+  peerTokenSelectionColors?: ReadonlyMap<string, string>;
+  sessionSelectionColor: string;
   movePreviewPositions: Record<string, TokenGridPlacement> | null;
   scalePreviewById: Record<
     string,
@@ -173,6 +178,8 @@ const TokenNode = memo(function TokenNode({
   highlightColor,
   previewPlacement,
   previewFootprint,
+  selectionColor,
+  peerSelectionColor,
   gmShowsHiddenTokens,
 }: {
   token: Token;
@@ -181,13 +188,14 @@ const TokenNode = memo(function TokenNode({
   highlightColor?: string;
   previewPlacement: TokenGridPlacement | null;
   previewFootprint: { w: number; h: number } | null;
+  selectionColor: string;
+  peerSelectionColor?: string;
   gmShowsHiddenTokens: boolean;
 }) {
-  const tl =
-    previewPlacement && selected
-      ? tokenWorldTopLeft(previewPlacement)
-      : tokenWorldTopLeft(token);
-  const footprint = previewFootprint && selected ? previewFootprint : token.footprint;
+  const tl = previewPlacement
+    ? tokenWorldTopLeft(previewPlacement)
+    : tokenWorldTopLeft(token);
+  const footprint = previewFootprint ?? token.footprint;
   const w = footprint.w * GRID_SIZE_PX;
   const h = footprint.h * GRID_SIZE_PX;
   const cx = tl.x + w / 2;
@@ -226,8 +234,12 @@ const TokenNode = memo(function TokenNode({
   const bloodiedY = (h - bloodiedSize) / 2;
   const ghostHidden =
     gmShowsHiddenTokens && !isTokenVisibleToPlayers(token);
-  const outlineStroke = selected ? '#38bdf8' : highlightColor;
-  const showOutline = Boolean(outlineStroke) && (!imgUrl || hasImageShape);
+  const outlineStroke = selected
+    ? selectionColor
+    : (peerSelectionColor ?? highlightColor);
+  const showOutline =
+    Boolean(outlineStroke) &&
+    (!imgUrl || hasImageShape || selected || Boolean(peerSelectionColor));
 
   return (
     <Group
@@ -324,6 +336,8 @@ const TokenNode = memo(function TokenNode({
 }, (prev, next) =>
   prev.token === next.token &&
   prev.selected === next.selected &&
+  prev.selectionColor === next.selectionColor &&
+  prev.peerSelectionColor === next.peerSelectionColor &&
   prev.highlightColor === next.highlightColor &&
   prev.gmShowsHiddenTokens === next.gmShowsHiddenTokens &&
   prev.assetUrls === next.assetUrls &&
@@ -336,6 +350,8 @@ export function TokenLayer({
   assetUrls,
   selectedTokenIds,
   measureHighlightColors,
+  peerTokenSelectionColors,
+  sessionSelectionColor,
   movePreviewPositions,
   scalePreviewById,
   hideMovingOffMap = false,
@@ -352,6 +368,7 @@ export function TokenLayer({
           scalePreview?.placement ?? movePreviewPositions?.[token.id] ?? null;
         const previewFootprint = scalePreview?.footprint ?? null;
         const movingSelected = previewPlacement != null && selectedSet.has(token.id);
+        const isSelected = selectedSet.has(token.id);
         if (hideMovingOffMap && movingSelected && !scalePreview) return null;
         return (
         <Group
@@ -364,10 +381,14 @@ export function TokenLayer({
           <TokenNode
             token={token}
             assetUrls={assetUrls}
-            selected={selectedSet.has(token.id)}
+            selected={isSelected}
             highlightColor={measureHighlightColors?.get(token.id)}
             previewPlacement={previewPlacement}
             previewFootprint={previewFootprint}
+            selectionColor={sessionSelectionColor}
+            peerSelectionColor={
+              isSelected ? undefined : peerTokenSelectionColors?.get(token.id)
+            }
             gmShowsHiddenTokens={gmShowsHiddenTokens}
           />
         </Group>
@@ -379,7 +400,11 @@ export function TokenLayer({
 
 type ConnectedTokenLayerProps = Omit<
   Props,
-  'movePreviewPositions' | 'scalePreviewById' | 'hideMovingOffMap'
+  | 'movePreviewPositions'
+  | 'scalePreviewById'
+  | 'hideMovingOffMap'
+  | 'peerTokenSelectionColors'
+  | 'sessionSelectionColor'
 >;
 
 export const ConnectedTokenLayer = memo(function ConnectedTokenLayer(
@@ -388,11 +413,57 @@ export const ConnectedTokenLayer = memo(function ConnectedTokenLayer(
   const movePreviewPositions = useStore((s) => s.movePreviewPositions);
   const scalePreviewById = useStore((s) => s.scalePreviewById);
   const hideMovingOffMap = useStore((s) => s.tokenDragOffMap);
+  const activeSceneId = useStore((s) => s.activeSceneId);
+  const playerName = useStore((s) => s.playerName);
+  const drawHue = useStore((s) => s.drawHue);
+  const sessionSelectionColor = useMemo(
+    () => defaultPlayerColor(playerName, drawHue ?? 0),
+    [playerName, drawHue],
+  );
+  const peerTokenSelectionColors = usePeerTokenSelectionColors(activeSceneId);
+  const remoteMotion = useRemoteMotionDisplay();
+
+  const { mergedMovePreviews, mergedScalePreviews } = useMemo(() => {
+    const move: Record<string, TokenGridPlacement> = { ...(movePreviewPositions ?? {}) };
+    const scale: Record<
+      string,
+      { footprint: { w: number; h: number }; placement: TokenGridPlacement }
+    > = { ...(scalePreviewById ?? {}) };
+
+    for (const [id, placement] of Object.entries(remoteMotion.tokenPlacements)) {
+      if (movePreviewPositions?.[id] || scalePreviewById?.[id]) continue;
+      const token = props.tokens.find((t) => t.id === id);
+      const remoteFootprint = remoteMotion.tokenFootprints[id];
+      if (
+        token &&
+        remoteFootprint &&
+        (remoteFootprint.w !== token.footprint.w || remoteFootprint.h !== token.footprint.h)
+      ) {
+        scale[id] = { footprint: remoteFootprint, placement };
+      } else {
+        move[id] = placement;
+      }
+    }
+
+    return {
+      mergedMovePreviews: Object.keys(move).length > 0 ? move : null,
+      mergedScalePreviews: Object.keys(scale).length > 0 ? scale : null,
+    };
+  }, [
+    movePreviewPositions,
+    scalePreviewById,
+    remoteMotion.tokenPlacements,
+    remoteMotion.tokenFootprints,
+    props.tokens,
+  ]);
+
   return (
     <TokenLayer
       {...props}
-      movePreviewPositions={movePreviewPositions}
-      scalePreviewById={scalePreviewById}
+      movePreviewPositions={mergedMovePreviews}
+      scalePreviewById={mergedScalePreviews}
+      peerTokenSelectionColors={peerTokenSelectionColors}
+      sessionSelectionColor={sessionSelectionColor}
       hideMovingOffMap={hideMovingOffMap}
     />
   );

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { canEditToken } from '../sync/yjsProvider';
+import { canMoveToken } from '../sync/syncProvider';
 import { DEFAULT_GRID_OFFSET } from '../lib/fixedGrid';
+import { defaultPlayerColor } from '../lib/playerColor';
 import { screenToWorld } from '../lib/grid';
 import type { MapCorner } from '../lib/mapGeometry';
 import type { Point, Token, TokenGridPlacement } from '../lib/types';
@@ -49,6 +50,9 @@ export function TokenScaleOverlay({
   containerRef,
 }: Props) {
   const activeSceneId = useStore((s) => s.activeSceneId);
+  const playerName = useStore((s) => s.playerName);
+  const drawHue = useStore((s) => s.drawHue);
+  const selectionColor = defaultPlayerColor(playerName, drawHue ?? 0);
   const selectedTokenIds = useStore((s) => s.selectedTokenIds);
   const scalePreviewById = useStore((s) => s.scalePreviewById);
   const setScalePreviewById = useStore((s) => s.setScalePreviewById);
@@ -66,7 +70,7 @@ export function TokenScaleOverlay({
 
   const scaleIds = selectedTokenIds.filter((id) => {
     const t = tokens.find((tok) => tok.id === id);
-    return t && canEditToken(t);
+    return t && canMoveToken(t);
   });
   const scaleIdsRef = useRef(scaleIds);
   scaleIdsRef.current = scaleIds;
@@ -306,13 +310,15 @@ export function TokenScaleOverlay({
         onPointerUp={onBackdropPointerUp}
       />
       <div
-        className="pointer-events-none absolute border-2 border-sky-400/90"
+        className="pointer-events-none absolute border-2"
         style={{
           left: box.left,
           top: box.top,
           width: box.width,
           height: box.height,
           zIndex: 11,
+          borderColor: selectionColor,
+          boxShadow: `0 0 0 1px color-mix(in srgb, ${selectionColor} 35%, transparent)`,
         }}
       />
       {CORNERS.map((corner) => {
@@ -333,11 +339,12 @@ export function TokenScaleOverlay({
             onPointerDown={(e) => onHandlePointerDown(corner, e)}
           >
             <div
-              className="pointer-events-none absolute left-1/2 top-1/2 rounded-sm border-2 border-white bg-sky-500 shadow-md"
+              className="pointer-events-none absolute left-1/2 top-1/2 rounded-sm border-2 border-white shadow-md"
               style={{
                 width: HANDLE_PX,
                 height: HANDLE_PX,
                 transform: 'translate(-50%, -50%)',
+                backgroundColor: selectionColor,
               }}
             />
           </div>

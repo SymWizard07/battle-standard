@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoomCode } from '../../lib/ids';
 import { DrawHuePicker } from '../toolbar/DrawHuePicker';
-import { disconnectSync, hostRoom } from '../../sync/yjsProvider';
+import { disconnectSync, hostRoom } from '../../sync/syncProvider';
 import { useStore } from '../../store/useStore';
 import { CopyIcon } from './CopyIcon';
 
@@ -18,14 +18,21 @@ export function SessionPanelContent() {
   const playerView = useStore((s) => s.playerView);
   const setPlayerView = useStore((s) => s.setPlayerView);
 
+  const needsHttps =
+    syncStatus === 'error' &&
+    typeof window !== 'undefined' &&
+    !window.isSecureContext;
+
   const statusLabel = reconnecting
     ? 'Reconnecting…'
-    : {
-        offline: 'Offline',
-        connecting: 'Connecting…',
-        connected: `Connected (${peerCount} peer${peerCount === 1 ? '' : 's'})`,
-        error: 'Sync error',
-      }[syncStatus];
+    : needsHttps
+      ? 'Needs HTTPS or localhost'
+      : {
+          offline: 'Offline',
+          connecting: 'Connecting…',
+          connected: `Connected (${peerCount} peer${peerCount === 1 ? '' : 's'})`,
+          error: 'Sync error',
+        }[syncStatus];
 
   const btn = 'h-11 rounded-lg bg-slate-800 px-3 text-xs text-slate-200 hover:bg-slate-700';
   const btnPrimary =

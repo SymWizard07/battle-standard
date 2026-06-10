@@ -19,6 +19,8 @@ import {
 } from '../lib/rotationHandle';
 import { DEFAULT_GRID_OFFSET } from '../lib/fixedGrid';
 import { snapWorldPointWithStrength } from '../lib/gridSnap';
+import { defaultPlayerColor } from '../lib/playerColor';
+import { canSessionMoveDrawStrokes } from '../sync/syncProvider';
 import { useStore } from '../store/useStore';
 import { RotationHandleControl } from './RotationHandleControl';
 
@@ -77,6 +79,9 @@ export function DrawStrokeEditOverlay({
   onDelete,
 }: Props) {
   const selectSnap = useStore((s) => s.selectSnap);
+  const playerName = useStore((s) => s.playerName);
+  const drawHue = useStore((s) => s.drawHue);
+  const selectionColor = defaultPlayerColor(playerName, drawHue ?? 0);
   const setDrawStrokeDragPreview = useStore((s) => s.setDrawStrokeDragPreview);
   const dragPreview = useStore((s) => s.drawStrokeDragPreview);
   const strokesRef = useRef(strokes);
@@ -359,8 +364,12 @@ export function DrawStrokeEditOverlay({
     rotateStartRef.current = null;
   };
 
+  const canDragStrokes = () =>
+    canSessionMoveDrawStrokes(strokesRef.current.map((stroke) => stroke.id));
+
   const onBodyPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
+    if (!canDragStrokes()) return;
     onBringToFront();
     resetDragState();
 
@@ -376,6 +385,7 @@ export function DrawStrokeEditOverlay({
 
   const onHandlePointerDown = (corner: MapCorner, e: React.PointerEvent) => {
     if (e.button !== 0) return;
+    if (!canDragStrokes()) return;
     onBringToFront();
     resetDragState();
 
@@ -395,6 +405,7 @@ export function DrawStrokeEditOverlay({
 
   const onRotateHandlePointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
+    if (!canDragStrokes()) return;
     onBringToFront();
     resetDragState();
 
@@ -434,15 +445,20 @@ export function DrawStrokeEditOverlay({
         onPointerDown={onBodyPointerDown}
       />
       <div
-        className="pointer-events-none absolute border-2 border-sky-400/90"
-        style={{ ...boxStyle, zIndex: 11 }}
+        className="pointer-events-none absolute border-2"
+        style={{
+          ...boxStyle,
+          zIndex: 11,
+          borderColor: selectionColor,
+          boxShadow: `0 0 0 1px color-mix(in srgb, ${selectionColor} 35%, transparent)`,
+        }}
       />
       {CORNERS.map((corner) => {
         const screen = cornerScreens[corner];
         return (
           <div
             key={corner}
-            className="pointer-events-auto absolute touch-none rounded-sm border-2 border-white bg-sky-500 shadow-md"
+            className="pointer-events-auto absolute touch-none rounded-sm border-2 border-white shadow-md"
             style={{
               left: screen.x,
               top: screen.y,
@@ -451,6 +467,7 @@ export function DrawStrokeEditOverlay({
               transform: 'translate(-50%, -50%)',
               cursor: corner === 'nw' || corner === 'se' ? 'nwse-resize' : 'nesw-resize',
               zIndex: 12,
+              backgroundColor: selectionColor,
             }}
             onPointerDown={(e) => onHandlePointerDown(corner, e)}
           />

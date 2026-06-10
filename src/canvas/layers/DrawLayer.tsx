@@ -11,6 +11,7 @@ import {
   sphereRadiusWorld,
 } from '../../lib/drawShapes';
 import { GRID_SIZE_PX } from '../../lib/fixedGrid';
+import { useRemoteMotionDisplay } from '../../hooks/useRemoteMotion';
 import { useStore } from '../../store/useStore';
 import type {
   ConeMeasureParams,
@@ -206,9 +207,14 @@ export function DrawLayer({ strokes, preview, erasePreview }: Props) {
 
 export const ConnectedDrawLayer = memo(function ConnectedDrawLayer(props: Props) {
   const dragPreview = useStore((s) => s.drawStrokeDragPreview);
-  const strokes = useMemo(
-    () => mergeDrawStrokeDragPreview(props.strokes, dragPreview),
-    [props.strokes, dragPreview],
-  );
+  const remoteMotion = useRemoteMotionDisplay();
+  const strokes = useMemo(() => {
+    let next = mergeDrawStrokeDragPreview(props.strokes, dragPreview);
+    const remoteStrokes = remoteMotion.drawStrokes;
+    if (Object.keys(remoteStrokes).length > 0) {
+      next = next.map((stroke) => remoteStrokes[stroke.id] ?? stroke);
+    }
+    return next;
+  }, [props.strokes, dragPreview, remoteMotion.drawStrokes]);
   return <DrawLayer {...props} strokes={strokes} />;
 });

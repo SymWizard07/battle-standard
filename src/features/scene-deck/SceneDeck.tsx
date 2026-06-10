@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { SceneDeckNode } from '../../lib/types';
 import { useStore } from '../../store/useStore';
-import { pushSceneToPlayers } from '../../sync/yjsProvider';
+import { pushSceneToPlayers } from '../../sync/syncProvider';
 import { confirmAction } from '../confirm/confirmDialogStore';
 import { APP_TITLE } from '../../hooks/useDocumentTitle';
 import { InfoModal } from '../settings/InfoModal';

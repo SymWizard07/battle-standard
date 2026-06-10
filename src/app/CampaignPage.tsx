@@ -10,7 +10,7 @@ import { loadCampaign } from '../lib/db';
 import { isMapAssetId } from '../lib/campaignAssets';
 import { screenToGridCell } from '../lib/grid';
 import { consumePendingJoin } from '../sync/sessionReconnect';
-import { disconnectSync, joinRoom, tryRestoreSession } from '../sync/yjsProvider';
+import { joinRoom, tryRestoreSession } from '../sync/syncProvider';
 import { ensureTemplateTokenAsset } from '../lib/templateTokenImage';
 import { useActiveScene, useStore } from '../store/useStore';
 
@@ -85,9 +85,7 @@ export function CampaignPage() {
         setCampaign(c);
         const pending = consumePendingJoin(campaignId);
         if (pending) {
-          void joinRoom(pending.roomCode, pending.playerName, {
-            skipHostProbe: pending.hostVerified,
-          }).then((result) => {
+          void joinRoom(pending.roomCode, pending.playerName).then((result) => {
             if (!result.ok) setJoinFailedMessage(result.error);
           });
         } else {
@@ -97,7 +95,6 @@ export function CampaignPage() {
     });
     return () => {
       alive = false;
-      disconnectSync({ intentional: false });
     };
   }, [campaignId, setCampaign]);
 

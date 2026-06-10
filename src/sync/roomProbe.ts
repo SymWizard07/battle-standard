@@ -1,25 +1,27 @@
-import * as Y from 'yjs';
-import { WebrtcProvider } from 'y-webrtc';
-
-export const SIGNALING = [
-  'wss://signaling.yjs.dev',
-  'wss://y-webrtc-signaling.herokuapp.com',
-];
+import {
+  joinNamedRoom,
+  leaveRoom,
+  type PresencePayload,
+} from '../net/trysteroRoom';
 
 const PROBE_TIMEOUT_MS = 6000;
 
-/** GM seeds these in wireGmSync before any player can legitimately join. */
-export function docHasGmHostData(activeDoc: Y.Doc): boolean {
-  const metaMap = activeDoc.getMap('meta');
-  if (metaMap.get('host')) return true;
-  const campaignMap = activeDoc.getMap('campaign');
-  if (campaignMap.get('json')) return true;
-  return false;
+function isValidCampaignJson(json: string): boolean {
+  try {
+    const parsed = JSON.parse(json) as { id?: unknown };
+    return typeof parsed?.id === 'string';
+  } catch {
+    return false;
+  }
+}
+
+function isGmPresence(payload: PresencePayload): boolean {
+  return payload.role === 'gm';
 }
 
 /**
- * Probe for a hosted session using the same WebrtcProvider stack as a real join.
- * Raw WebSocket signaling alone does not connect reliably in this environment.
+ * Ephemeral join to detect whether a GM is hosting the room.
+ * Resolves true on GM presence or valid campaign JSON within the timeout.
  */
 export function probeRoomHosted(roomCode: string): Promise<boolean> {
   const topic = roomCode.trim().toUpperCase();
@@ -27,32 +29,26 @@ export function probeRoomHosted(roomCode: string): Promise<boolean> {
 
   return new Promise((resolve) => {
     let settled = false;
-    const probeDoc = new Y.Doc();
-    const provider = new WebrtcProvider(topic, probeDoc, {
-      signaling: SIGNALING,
-      maxConns: 5,
-    });
 
-    const finish = (found: boolean, _reason: string) => {
+    const finish = (found: boolean) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      provider.destroy();
-      probeDoc.destroy();
-      resolve(found);
+      void leaveRoom().then(() => resolve(found));
     };
 
-    const check = () => {
-      if (docHasGmHostData(probeDoc)) finish(true, 'gm-data');
-    };
+    const timeout = setTimeout(() => finish(false), PROBE_TIMEOUT_MS);
 
-    probeDoc.getMap('meta').observe(check);
-    probeDoc.getMap('campaign').observe(check);
-
-    provider.on('peers', () => {
-      check();
+    void joinNamedRoom(topic, {
+      onPresence: (payload) => {
+        if (isGmPresence(payload)) finish(true);
+      },
+      onCampaign: (json) => {
+        if (isValidCampaignJson(json)) finish(true);
+      },
+      onPeerJoin: () => {
+        // Peer connected; wait briefly for presence/campaign from GM.
+      },
     });
-
-    const timeout = setTimeout(() => finish(false, 'timeout'), PROBE_TIMEOUT_MS);
   });
 }

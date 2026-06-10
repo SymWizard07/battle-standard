@@ -23,6 +23,7 @@ import type {
   Point,
   SphereMeasureParams,
 } from '../../lib/types';
+import type { RemoteEphemeralMeasure } from '../../sync/remoteMotion';
 import { GRID_SIZE_PX } from '../../lib/fixedGrid';
 import {
   cubeCenterWorld,
@@ -38,6 +39,7 @@ const DEBUG_5E_COLOR = '#38bdf8';
 interface Props {
   measurements: MeasurementObject[];
   ephemeral: EphemeralMeasurement | null;
+  remoteEphemeral?: RemoteEphemeralMeasure | null;
   alternatingDiagonals: boolean;
   debugDualView?: boolean;
   viewScale: number;
@@ -297,6 +299,7 @@ function renderMeasurement(
 export function MeasurementLayer({
   measurements,
   ephemeral,
+  remoteEphemeral = null,
   alternatingDiagonals: _alternatingDiagonals,
   debugDualView = false,
   viewScale: _viewScale,
@@ -334,6 +337,25 @@ export function MeasurementLayer({
     );
   }
 
+  if (remoteEphemeral && !ephemeral) {
+    const remote = remoteEphemeral.measure;
+    const style = resolveDisplayStyle(
+      remote.displayStyle,
+      remote.kind === 'cone' ? (remote.params as ConeMeasureParams) : undefined,
+    );
+    items.push(
+      renderMeasurement(
+        remote.kind,
+        remote.params,
+        remoteEphemeral.color,
+        remote.opacity,
+        'remote-ephemeral',
+        style,
+        debugDualView,
+      ),
+    );
+  }
+
   return <Group listening={false}>{items}</Group>;
 }
 
@@ -341,11 +363,15 @@ export function MeasurementLayer({
 export function MeasurementLabelsLayer({
   measurements,
   ephemeral,
+  remoteEphemeral = null,
   alternatingDiagonals,
   viewScale,
   fadingMeasurements,
   onDismissMeasurement,
-}: Pick<Props, 'measurements' | 'ephemeral' | 'alternatingDiagonals' | 'viewScale' | 'fadingMeasurements'> & {
+}: Pick<
+  Props,
+  'measurements' | 'ephemeral' | 'remoteEphemeral' | 'alternatingDiagonals' | 'viewScale' | 'fadingMeasurements'
+> & {
   onDismissMeasurement?: (id: string) => void;
 }) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -369,6 +395,23 @@ export function MeasurementLabelsLayer({
   if (ephemeral && isValidMeasurePreview(ephemeral.kind, ephemeral.params)) {
     const info = getMeasureLabelInfo(ephemeral.kind, ephemeral.params, alternatingDiagonals);
     if (info) labels.push({ key: 'ephemeral', opacity: ephemeral.opacity, dismissible: false, ...info });
+  }
+
+  if (
+    !ephemeral &&
+    remoteEphemeral &&
+    isValidMeasurePreview(remoteEphemeral.measure.kind, remoteEphemeral.measure.params)
+  ) {
+    const remote = remoteEphemeral.measure;
+    const info = getMeasureLabelInfo(remote.kind, remote.params, alternatingDiagonals);
+    if (info) {
+      labels.push({
+        key: 'remote-ephemeral',
+        opacity: remote.opacity,
+        dismissible: false,
+        ...info,
+      });
+    }
   }
 
   return (

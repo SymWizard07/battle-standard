@@ -1,146 +1,118 @@
-import * as Y from 'yjs';
 import { referencedAssetIds } from '../lib/campaignAssets';
 import { loadAsset, saveAsset, type StoredAsset } from '../lib/db';
-import type { Campaign, SessionRole } from '../lib/types';
+import type { Campaign } from '../lib/types';
+import { publishAsset, type AssetMetadata } from '../net/trysteroRoom';
 import { useStore } from '../store/useStore';
 
-type SyncedAssetRecord = {
-  mimeType: string;
-  name: string;
-  kind?: StoredAsset['kind'];
-  createdAt: number;
-  dataB64: string;
-};
+const RELIABLE_RETRY_MS = 400;
+const RELIABLE_MAX_ATTEMPTS = 12;
 
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
-  return btoa(binary);
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-function isSyncedAssetRecord(value: unknown): value is SyncedAssetRecord {
-  if (!value || typeof value !== 'object') return false;
-  const record = value as SyncedAssetRecord;
-  return (
-    typeof record.mimeType === 'string' &&
-    typeof record.name === 'string' &&
-    typeof record.createdAt === 'number' &&
-    typeof record.dataB64 === 'string'
-  );
-}
+let assetRetryTimer: ReturnType<typeof setInterval> | null = null;
+const sentAssetIds = new Set<string>();
 
 async function ensureAssetUrlRegistered(assetId: string, blob: Blob): Promise<void> {
   if (useStore.getState().assetUrls[assetId]) return;
   useStore.getState().registerAssetUrl(assetId, URL.createObjectURL(blob));
 }
 
-async function importSyncedAsset(
-  assetId: string,
-  record: SyncedAssetRecord,
+function isAssetMetadata(value: unknown): value is AssetMetadata {
+  if (!value || typeof value !== 'object') return false;
+  const meta = value as AssetMetadata;
+  return (
+    typeof meta.assetId === 'string' &&
+    typeof meta.mimeType === 'string' &&
+    typeof meta.name === 'string' &&
+    typeof meta.createdAt === 'number'
+  );
+}
+
+export async function handleRemoteAsset(
+  data: ArrayBuffer,
+  metadata: AssetMetadata,
   campaignId: string,
 ): Promise<void> {
+  if (!isAssetMetadata(metadata)) return;
+
+  const { assetId, mimeType, name, kind, createdAt } = metadata;
   const existing = await loadAsset(assetId);
   if (existing) {
     await ensureAssetUrlRegistered(assetId, existing.blob);
     return;
   }
-  const bytes = base64ToBytes(record.dataB64);
-  const blob = new Blob([Uint8Array.from(bytes)], { type: record.mimeType });
+
+  const blob = new Blob([data], { type: mimeType });
   await saveAsset({
     id: assetId,
     campaignId,
     blob,
-    mimeType: record.mimeType,
-    name: record.name,
-    createdAt: record.createdAt,
-    kind: record.kind,
+    mimeType,
+    name,
+    createdAt,
+    kind,
   });
   await ensureAssetUrlRegistered(assetId, blob);
 }
 
-async function pushAssetIfMissing(
-  assetMap: Y.Map<unknown>,
-  asset: StoredAsset,
-): Promise<void> {
-  if (assetMap.has(asset.id)) return;
+export function clearAssetSyncState(): void {
+  if (assetRetryTimer) {
+    clearInterval(assetRetryTimer);
+    assetRetryTimer = null;
+  }
+  sentAssetIds.clear();
+}
+
+function clearAssetRetry(): void {
+  if (assetRetryTimer) {
+    clearInterval(assetRetryTimer);
+    assetRetryTimer = null;
+  }
+}
+
+async function pushAsset(asset: StoredAsset): Promise<void> {
+  if (sentAssetIds.has(asset.id)) return;
   const buffer = await asset.blob.arrayBuffer();
-  const payload: SyncedAssetRecord = {
+  publishAsset(buffer, {
+    assetId: asset.id,
     mimeType: asset.mimeType,
     name: asset.name,
     kind: asset.kind,
     createdAt: asset.createdAt,
-    dataB64: bytesToBase64(new Uint8Array(buffer)),
-  };
-  assetMap.set(asset.id, payload);
+  });
+  sentAssetIds.add(asset.id);
 }
 
-async function pushCampaignAssets(
-  assetMap: Y.Map<unknown>,
-  campaign: Campaign | null,
-): Promise<void> {
+async function pushCampaignAssets(campaign: Campaign | null): Promise<void> {
   if (!campaign) return;
   for (const assetId of referencedAssetIds(campaign)) {
     const asset = await loadAsset(assetId);
-    if (asset) await pushAssetIfMissing(assetMap, asset);
+    if (asset) await pushAsset(asset);
   }
 }
 
-async function hydrateAssetsFromMap(
-  assetMap: Y.Map<unknown>,
-  campaignId: string,
-  campaign: Campaign | null,
-): Promise<void> {
-  const wanted = referencedAssetIds(campaign);
-  for (const assetId of wanted) {
-    const raw = assetMap.get(assetId);
-    if (!isSyncedAssetRecord(raw)) continue;
-    await importSyncedAsset(assetId, raw, campaignId);
-  }
+export function pushAllAssetsReliable(campaign: Campaign | null): void {
+  clearAssetRetry();
+
+  const send = () => {
+    void pushCampaignAssets(campaign);
+  };
+
+  send();
+  let attempts = 0;
+  assetRetryTimer = setInterval(() => {
+    const state = useStore.getState();
+    if (state.role !== 'gm' || !state.campaign) {
+      clearAssetRetry();
+      return;
+    }
+    void pushCampaignAssets(state.campaign);
+    attempts += 1;
+    if (attempts >= RELIABLE_MAX_ATTEMPTS) clearAssetRetry();
+  }, RELIABLE_RETRY_MS);
 }
 
-export function wireAssetSync(
-  doc: Y.Doc,
-  role: SessionRole,
-  campaignId: string,
-): () => void {
-  const assetMap = doc.getMap('assets');
-
-  if (role === 'player') {
-    let syncing = false;
-    const syncAll = () => {
-      if (syncing) return;
-      syncing = true;
-      void hydrateAssetsFromMap(
-        assetMap,
-        campaignId,
-        useStore.getState().campaign,
-      ).finally(() => {
-        syncing = false;
-      });
-    };
-
-    assetMap.observe(syncAll);
-    syncAll();
-
-    const unsubCampaign = useStore.subscribe((state, prev) => {
-      if (state.campaign !== prev.campaign) syncAll();
-    });
-
-    return () => {
-      assetMap.unobserve(syncAll);
-      unsubCampaign();
-    };
-  }
-
+export function wireGmAssetSync(): () => void {
   const pushAll = () => {
-    void pushCampaignAssets(assetMap, useStore.getState().campaign);
+    void pushCampaignAssets(useStore.getState().campaign);
   };
 
   pushAll();
@@ -153,4 +125,14 @@ export function wireAssetSync(
   return () => {
     unsub();
   };
+}
+
+export async function hydrateAssetsForCampaign(
+  campaign: Campaign | null,
+): Promise<void> {
+  const wanted = referencedAssetIds(campaign);
+  for (const assetId of wanted) {
+    const existing = await loadAsset(assetId);
+    if (existing) await ensureAssetUrlRegistered(assetId, existing.blob);
+  }
 }

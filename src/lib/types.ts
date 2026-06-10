@@ -184,6 +184,8 @@ export interface DrawStroke {
   mapLayerId?: string;
   points?: Point[];
   params?: MeasurementParams;
+  /** Who created this stroke (used for multiplayer sync). */
+  createdBy?: { role: 'gm' | 'player'; name: string };
 }
 
 export interface DrawPreview {

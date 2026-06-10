@@ -1,7 +1,11 @@
 import * as Y from 'yjs';
 import { WebrtcProvider } from 'y-webrtc';
+import { isTokenLockedForPlayers } from '../lib/tokenVisibility';
 import type { Campaign, SceneId, SessionRole } from '../lib/types';
+import { deepEqual } from '../lib/history/equal';
 import { useStore } from '../store/useStore';
+import { wireAssetSync } from './assetSync';
+import { mergeCampaignForSync } from './campaignMerge';
 import { probeRoomHosted, SIGNALING, docHasGmHostData } from './roomProbe';
 import {
   clearSession,
@@ -18,6 +22,7 @@ const PLAYER_JOIN_TIMEOUT_MS = 8000;
 let doc: Y.Doc | null = null;
 let provider: WebrtcProvider | null = null;
 let unsubscribeStore: (() => void) | null = null;
+let unsubscribeAssetSync: (() => void) | null = null;
 let reconnectTimer: ReturnType<typeof setInterval> | null = null;
 let peerLossTimer: ReturnType<typeof setTimeout> | null = null;
 let intentionalDisconnect = false;
@@ -103,6 +108,8 @@ function teardownProvider(): void {
   clearPlayerJoinWatch();
   unsubscribeStore?.();
   unsubscribeStore = null;
+  unsubscribeAssetSync?.();
+  unsubscribeAssetSync = null;
   provider?.destroy();
   provider = null;
   doc?.destroy();
@@ -228,64 +235,67 @@ function handlePeers(event: { webrtcPeers: unknown[]; bcPeers: unknown[] }): voi
   }
 }
 
-function wireGmSync(campaignMap: Y.Map<unknown>, metaMap: Y.Map<unknown>): void {
-  const local = useStore.getState().campaign;
-  if (local) {
-    campaignMap.set('json', JSON.stringify(local));
-    metaMap.set('activeSceneId', useStore.getState().activeSceneId ?? '');
-    metaMap.set('host', useStore.getState().playerName);
+type SyncSession = {
+  applyingRemote: boolean;
+};
+
+function applyRemoteCampaign(
+  json: string,
+  role: SessionRole,
+  session: SyncSession,
+): void {
+  try {
+    const remote = JSON.parse(json) as Campaign;
+    const local = useStore.getState().campaign;
+    const next =
+      local != null ? mergeCampaignForSync(local, remote, role) : remote;
+    if (local != null && deepEqual(local, next)) return;
+    session.applyingRemote = true;
+    useStore.getState().setCampaignRemote(next);
+  } catch {
+    useStore.getState().setSyncStatus('error');
+  } finally {
+    session.applyingRemote = false;
+  }
+}
+
+function wireCampaignSync(
+  campaignMap: Y.Map<unknown>,
+  metaMap: Y.Map<unknown>,
+  role: SessionRole,
+): void {
+  const session: SyncSession = { applyingRemote: false };
+
+  if (role === 'gm') {
+    const local = useStore.getState().campaign;
+    if (local) {
+      campaignMap.set('json', JSON.stringify(local));
+      metaMap.set('activeSceneId', useStore.getState().activeSceneId ?? '');
+      metaMap.set('host', useStore.getState().playerName);
+    }
   }
 
-  let applyingRemote = false;
-
   campaignMap.observe(() => {
-    if (applyingRemote) return;
+    if (session.applyingRemote) return;
     const json = campaignMap.get('json') as string | undefined;
     if (!json) return;
-    try {
-      applyingRemote = true;
-      const remote = JSON.parse(json) as Campaign;
-      useStore.getState().setCampaignRemote(remote);
-    } finally {
-      applyingRemote = false;
-    }
+    applyRemoteCampaign(json, role, session);
   });
 
   metaMap.observe(() => {
     const active = metaMap.get('activeSceneId') as string | undefined;
-    if (active && useStore.getState().role === 'player') {
-      useStore.getState().setActiveScene(active as SceneId);
-    }
+    if (!active || role !== 'player') return;
+    useStore.getState().setActiveScene(active as SceneId);
   });
 
   unsubscribeStore = useStore.subscribe((state, prev) => {
-    if (applyingRemote || state.role !== 'gm' || !doc) return;
+    if (session.applyingRemote || state.role !== role || !doc) return;
     if (state.campaign !== prev.campaign && state.campaign) {
       campaignMap.set('json', JSON.stringify(state.campaign));
     }
-    if (state.activeSceneId !== prev.activeSceneId && state.activeSceneId) {
+    if (role === 'gm' && state.activeSceneId !== prev.activeSceneId && state.activeSceneId) {
       metaMap.set('activeSceneId', state.activeSceneId);
     }
-  });
-}
-
-function wirePlayerSync(campaignMap: Y.Map<unknown>, metaMap: Y.Map<unknown>): void {
-  campaignMap.observe(() => {
-    const json = campaignMap.get('json') as string | undefined;
-    if (!json) return;
-    try {
-      const remote = JSON.parse(json) as Campaign;
-      useStore.getState().setCampaignRemote(remote);
-      const active = metaMap.get('activeSceneId') as string | undefined;
-      if (active) useStore.getState().setActiveScene(active as SceneId);
-    } catch {
-      useStore.getState().setSyncStatus('error');
-    }
-  });
-
-  metaMap.observe(() => {
-    const active = metaMap.get('activeSceneId') as string | undefined;
-    if (active) useStore.getState().setActiveScene(active as SceneId);
   });
 }
 
@@ -326,13 +336,11 @@ function connectSession(params: ConnectParams, options?: { fromReconnect?: boole
 
   provider.on('peers', handlePeers);
 
-  if (params.role === 'gm') {
-    wireGmSync(campaignMap, metaMap);
-  } else {
-    wirePlayerSync(campaignMap, metaMap);
-    if (playerJoinResolve && doc) {
-      startPlayerJoinWatch(doc);
-    }
+  wireCampaignSync(campaignMap, metaMap, params.role);
+  unsubscribeAssetSync = wireAssetSync(doc, params.role, params.campaignId);
+
+  if (params.role === 'player' && playerJoinResolve && doc) {
+    startPlayerJoinWatch(doc);
   }
 }
 
@@ -428,8 +436,7 @@ export function canEditToken(token: {
 }): boolean {
   const { role, playerView } = useStore.getState();
   if (role === 'gm' && !playerView) return true;
-  if (token.lockedForPlayers) return false;
-  return token.owner === 'player';
+  return !isTokenLockedForPlayers(token);
 }
 
 export function canEditFog(): boolean {

@@ -595,7 +595,7 @@ export function ContextPanel() {
   const isCoarsePointer =
     typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)')?.matches;
   const showTransform =
-    editableTokens.length > 0 && !asPlayer && activeTool === 'transform' && !movingToken;
+    editableTokens.length > 0 && activeTool === 'transform' && !movingToken;
 
   const applyStatusForTokens = (tokenIds: string[], status: StatusEffectId) => {
     const editableIds = tokenIds.filter((id) => {
@@ -678,7 +678,7 @@ export function ContextPanel() {
             onRenamingChange={setRenamingTokenName}
             onRename={(name) => updateToken(activeSceneId!, primaryToken!.id, { name })}
           />
-          {canEditToken(primaryToken!) && !asPlayer && (
+          {canEditToken(primaryToken!) && (
             <button
               type="button"
               className="mt-2 min-h-10 w-full rounded-lg border border-slate-600 bg-slate-800/80 text-sm text-slate-200 hover:bg-slate-700"

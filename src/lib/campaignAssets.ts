@@ -13,6 +13,18 @@ export function mapAssetIdsInCampaign(campaign: Campaign | null): Set<string> {
   return ids;
 }
 
+/** Map layers plus token images referenced by the live campaign. */
+export function referencedAssetIds(campaign: Campaign | null): Set<string> {
+  const ids = mapAssetIdsInCampaign(campaign);
+  if (!campaign) return ids;
+  for (const scene of Object.values(campaign.scenes)) {
+    for (const token of scene.tokens) {
+      if (token.imageAssetId) ids.add(token.imageAssetId);
+    }
+  }
+  return ids;
+}
+
 export function isTokenLibraryAsset(asset: StoredAsset, mapAssetIds: Set<string>): boolean {
   return asset.kind !== 'map' && !mapAssetIds.has(asset.id);
 }

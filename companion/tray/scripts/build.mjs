@@ -19,9 +19,11 @@ async function writeTrayIcon() {
   const icon32 = join(resourcesDir, 'icon.png');
   const icon16 = join(resourcesDir, 'icon-16.png');
   const icon256 = join(resourcesDir, 'icon-256.png');
+  const icon512 = join(resourcesDir, 'icon-512.png');
   await sharp(faviconSvg).resize(32, 32).png().toFile(icon32);
   await sharp(faviconSvg).resize(16, 16).png().toFile(icon16);
   await sharp(faviconSvg).resize(256, 256).png().toFile(icon256);
+  await sharp(faviconSvg).resize(512, 512).png().toFile(icon512);
 }
 
 function runHostBuild() {

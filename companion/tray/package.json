@@ -24,6 +24,7 @@
     "directories": {
       "output": "release"
     },
+    "publish": null,
     "files": [
       "dist/**/*",
       "package.json"
@@ -81,7 +82,7 @@
           ]
         }
       ],
-      "icon": "resources/icon-256.png",
+      "icon": "resources/icon-512.png",
       "category": "public.app-category.utilities",
       "identity": null,
       "artifactName": "Battle-Standard-Save-Helper-${version}-${arch}.${ext}"
@@ -106,7 +107,7 @@
           ]
         }
       ],
-      "icon": "resources/icon-256.png",
+      "icon": "resources/icon-512.png",
       "category": "Utility",
       "maintainer": "Battle Standard",
       "artifactName": "Battle-Standard-Save-Helper-${version}-${arch}.${ext}"

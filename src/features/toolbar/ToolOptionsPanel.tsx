@@ -3,6 +3,7 @@ import { useMemo, useRef } from 'react';
 import type { MeasureKind, MeasureDisplayStyle, DrawToolShape } from '../../lib/types';
 import { newId } from '../../lib/ids';
 import { saveAsset } from '../../lib/db';
+import { scheduleStableMirror } from '../../lib/stableStorage';
 import {
   autoSizeMapScaleToGrid,
   loadImageDimensions,
@@ -265,6 +266,7 @@ export function ToolOptionsPanel() {
       kind: 'map',
     });
     registerAssetUrl(assetId, URL.createObjectURL(blob));
+    scheduleStableMirror(campaign.id);
     addMapLayer(activeSceneId, assetId, { width, height });
   };
 

@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Group, Panel, Separator, useGroupRef, usePanelRef } from 'react-resizable-panels';
 import { useLayoutStore } from '../layoutStore';
 import type { LayoutNode, SplitLayoutNode } from '../schema/layoutSchema';
@@ -10,6 +10,7 @@ import {
 import { buildDefaultSplitLayout, splitPanelGroupKey } from '../layoutTreeUtils';
 import { LayoutNodeRenderer } from './LayoutNodeRenderer';
 import { PanelCollapseHandle } from './PanelCollapseHandle';
+import { usePanelCollapsed } from './usePanelCollapsed';
 
 type Props = {
   node: SplitLayoutNode;
@@ -39,6 +40,13 @@ export function SplitPane({
   const layoutMountKey = useLayoutStore((s) => s.layoutMountKey);
   const groupRef = useGroupRef();
   const syncedGroupKeyRef = useRef<string | null>(null);
+  const [collapsedByPanelId, setCollapsedByPanelId] = useState<Record<string, boolean>>({});
+  const reportPanelCollapsed = useCallback((panelId: string, collapsed: boolean) => {
+    setCollapsedByPanelId((prev) => {
+      if (prev[panelId] === collapsed) return prev;
+      return { ...prev, [panelId]: collapsed };
+    });
+  }, []);
   const orientation = node.direction === 'row' ? 'horizontal' : 'vertical';
   const groupKey = `${splitPanelGroupKey(node)}:${layoutMountKey}`;
   // Stored (expanded) sizes only — never pass startCollapsedPanels here or the Group
@@ -145,6 +153,17 @@ export function SplitPane({
           dropHighlightPath != null &&
           dropHighlightPath.length === childPath.length &&
           dropHighlightPath.every((v, idx) => v === childPath[idx]);
+        const nextChild = node.children[i + 1];
+        const selfCollapsible = getPanelCollapse(child) != null && child.type !== 'playArea';
+        const nextCollapsible =
+          nextChild != null &&
+          getPanelCollapse(nextChild) != null &&
+          nextChild.type !== 'playArea';
+        const selfCollapsed = collapsedByPanelId[child.id] ?? false;
+        const nextCollapsed = nextChild ? (collapsedByPanelId[nextChild.id] ?? false) : false;
+        const separatorDisabled =
+          mode === 'live' &&
+          ((selfCollapsible && selfCollapsed) || (nextCollapsible && nextCollapsed));
 
         return (
           <SplitChild
@@ -163,6 +182,8 @@ export function SplitPane({
             dropHighlightPath={dropHighlightPath}
             onDropTarget={onDropTarget}
             storedSizePercent={node.sizes[i] ?? 100 / node.children.length}
+            separatorDisabled={separatorDisabled}
+            onCollapsedChange={reportPanelCollapsed}
             onRestoreExpandedLayout={() =>
               restorePanelLayout(
                 child.id,
@@ -191,6 +212,8 @@ type ChildProps = {
   dropHighlightPath?: number[] | null;
   onDropTarget?: (path: number[], e: React.DragEvent) => void;
   storedSizePercent: number;
+  separatorDisabled?: boolean;
+  onCollapsedChange?: (panelId: string, collapsed: boolean) => void;
   onRestoreExpandedLayout?: () => void;
 };
 
@@ -209,6 +232,8 @@ function SplitChild({
   dropHighlightPath,
   onDropTarget,
   storedSizePercent,
+  separatorDisabled = false,
+  onCollapsedChange,
   onRestoreExpandedLayout,
 }: ChildProps) {
   const panelRef = usePanelRef();
@@ -216,6 +241,14 @@ function SplitChild({
   const collapseDirection = getPanelCollapse(child);
   const hasCollapseControl = collapseDirection != null && child.type !== 'playArea';
   const panelMinSize = child.type === 'playArea' ? 20 : 0;
+  const collapsed = usePanelCollapsed(panelRef, panelElementRef);
+
+  useLayoutEffect(() => {
+    if (!hasCollapseControl) return;
+    onCollapsedChange?.(child.id, collapsed);
+  }, [child.id, collapsed, hasCollapseControl, onCollapsedChange]);
+
+  const resizeLocked = mode === 'live' && hasCollapseControl && collapsed;
 
   return (
     <>
@@ -226,6 +259,7 @@ function SplitChild({
         minSize={panelMinSize}
         collapsible={hasCollapseControl}
         collapsedSize={hasCollapseControl ? '0%' : undefined}
+        disabled={resizeLocked}
         className={highlighted ? 'ring-2 ring-inset ring-sky-500' : undefined}
         style={hasCollapseControl ? { overflow: 'visible' } : undefined}
       >
@@ -276,7 +310,12 @@ function SplitChild({
         </div>
       </Panel>
       {index < count - 1 && (
-        <Separator className="bg-slate-700 data-[separator-active]:bg-sky-500" />
+        <Separator
+          disabled={separatorDisabled}
+          className={`bg-slate-700 data-[separator-active]:bg-sky-500${
+            separatorDisabled ? ' pointer-events-none opacity-40' : ''
+          }`}
+        />
       )}
     </>
   );

@@ -1,0 +1,68 @@
+{
+  "name": "@battle-standard/save-tray",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Battle Standard Save Helper — system tray app",
+  "author": "Battle Standard",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "electron .",
+    "dev": "npm run build && electron .",
+    "pack": "npm run build && electron-builder --win portable",
+    "pack:dir": "npm run build && electron-builder --win dir",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "tsx config.integration.test.ts",
+    "verify-bundle": "node scripts/verify-bundle.mjs"
+  },
+  "build": {
+    "appId": "com.battlestandard.savehelper",
+    "productName": "Battle Standard Save Helper",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/host",
+        "to": "host"
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "resources/icon-16.png",
+        "to": "icon-16.png"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icon-256.png",
+      "sign": null,
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "Battle-Standard-Save-Helper-${version}-portable.exe"
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "electron": "^34.5.8",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.0",
+    "sharp": "^0.34.3",
+    "tsx": "^4.22.3",
+    "typescript": "~6.0.2"
+  }
+}

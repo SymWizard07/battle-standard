@@ -1,0 +1,19 @@
+{
+  "name": "@battle-standard/save-host",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Native messaging host for Battle Standard campaign saves",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.22.3",
+    "typescript": "~6.0.2"
+  }
+}

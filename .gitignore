@@ -23,3 +23,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Stale tsc output — companion/protocol is TypeScript source (Vite/esbuild resolve .js → .ts)
+companion/protocol/*.js
+companion/protocol/*.d.ts
+!companion/protocol/*.test.ts
+src/lib/types.js
+src/lib/types.d.ts

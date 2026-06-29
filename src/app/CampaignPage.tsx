@@ -7,6 +7,7 @@ import { usePasteTokenImage } from '../hooks/usePasteTokenImage';
 import { formatDocumentTitle, useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useGlobalAssets } from '../hooks/useGlobalAssets';
 import { loadCampaign } from '../lib/db';
+import { preferSyncCampaignFromDisk } from '../lib/companion/companionStorage';
 import { isMapAssetId } from '../lib/campaignAssets';
 import { screenToGridCell } from '../lib/grid';
 import { consumePendingJoin } from '../sync/sessionReconnect';
@@ -30,6 +31,7 @@ export function CampaignPage() {
   const registerAssetUrl = useStore((s) => s.registerAssetUrl);
   const roomCode = useStore((s) => s.roomCode);
   const [joinFailedMessage, setJoinFailedMessage] = useState<string | null>(null);
+  const [booted, setBooted] = useState(false);
   const [tooltip, setTooltip] = useState({ x: 0, y: 0, show: false });
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mapWrapRef = useRef<HTMLDivElement>(null);
@@ -64,8 +66,8 @@ export function CampaignPage() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [undo, redo]);
 
-  useCampaignAssets(campaignId);
-  useGlobalAssets();
+  useCampaignAssets(booted ? campaignId : undefined);
+  useGlobalAssets(booted);
 
   useDocumentTitle(
     campaign
@@ -80,8 +82,20 @@ export function CampaignPage() {
   useEffect(() => {
     if (!campaignId) return;
     let alive = true;
-    void loadCampaign(campaignId).then((c) => {
-      if (alive && c) {
+    setBooted(false);
+    void (async () => {
+      const local = await loadCampaign(campaignId);
+      if (!alive) return;
+      if (local) {
+        setCampaign(local);
+        setBooted(true);
+      }
+
+      await preferSyncCampaignFromDisk(campaignId);
+      const synced = await loadCampaign(campaignId);
+      if (!alive) return;
+      const c = synced ?? local;
+      if (c) {
         setCampaign(c);
         const pending = consumePendingJoin(campaignId);
         if (pending) {
@@ -92,7 +106,8 @@ export function CampaignPage() {
           tryRestoreSession(campaignId);
         }
       }
-    });
+      setBooted(true);
+    })();
     return () => {
       alive = false;
     };

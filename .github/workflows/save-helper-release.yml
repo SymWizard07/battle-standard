@@ -1,0 +1,62 @@
+name: Save Helper release
+
+on:
+  push:
+    tags:
+      - 'save-helper-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install tray dependencies
+        working-directory: companion/tray
+        run: npm ci
+
+      - name: Build and pack portable Windows app
+        working-directory: companion/tray
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npm run pack
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#save-helper-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Save Helper v${{ steps.version.outputs.version }}
+          body: |
+            ## Battle Standard Save Helper v${{ steps.version.outputs.version }}
+
+            Desktop tray app + native host for saving campaigns outside the browser.
+
+            ### Install
+
+            1. Download **Battle-Standard-Save-Helper-${{ steps.version.outputs.version }}-portable.exe** below.
+            2. Run it — choose a save folder from the tray menu.
+            3. Install the [Firefox extension](https://addons.mozilla.org/firefox/downloads/file/4873162/c499cfaf782b48d1996b-0.1.0.xpi) (Mozilla Add-ons, v0.1.0).
+            4. Open Battle Standard and confirm Save Helper shows connected.
+
+            Firefox native messaging is registered automatically when the tray app starts.
+
+            ### Notes
+
+            - Campaigns still save in the browser without Save Helper.
+            - Portable build — run the `.exe` directly (add to Startup if desired).
+          files: |
+            companion/tray/release/Battle-Standard-Save-Helper-*.exe
+          draft: false
+          prerelease: false

@@ -4,6 +4,7 @@ import { createCampaign, createScene, TOKEN_COLORS } from '../lib/campaignFactor
 import { colorForPlayerName, defaultPlayerColor, hueForPlayerName, snapHue } from '../lib/playerColor';
 import { isMapAssetId } from '../lib/campaignAssets';
 import { saveCampaign, loadCampaignAssets, loadTokenLibraryLayout, saveTokenLibraryLayout, deleteAsset, saveAsset } from '../lib/db';
+import { scheduleStableGlobalMirror, scheduleStableMirror } from '../lib/stableStorage';
 import { isTokenLibraryAsset, mapAssetIdsInCampaign } from '../lib/campaignAssets';
 import { newId } from '../lib/ids';
 import { loadImageDimensions } from '../lib/mapAlign';
@@ -499,11 +500,26 @@ function applyPlayerDefaultHue(name: string, role: SessionRole): number | undefi
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
+const PERSIST_DEBOUNCE_MS = 400;
+
 function schedulePersist(get: () => AppStore) {
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
+    persistTimer = null;
     void get().persist();
-  }, 400);
+  }, PERSIST_DEBOUNCE_MS);
+}
+
+export function schedulePersistFromSync(): void {
+  schedulePersist(() => useStore.getState());
+}
+
+export async function flushPersistFromSync(): Promise<void> {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  await useStore.getState().persist();
 }
 
 export const useStore = create<AppStore>((set, get) => ({
@@ -1127,6 +1143,7 @@ export const useStore = create<AppStore>((set, get) => ({
     if (!campaign) return;
     await saveCampaign(campaign);
     set({ dirty: false });
+    scheduleStableMirror(campaign.id);
   },
   updateScene: (sceneId, updater) => {
     const { campaign } = get();
@@ -1391,6 +1408,7 @@ export const useStore = create<AppStore>((set, get) => ({
         kind: 'token',
       });
       get().registerAssetUrl(assetId, URL.createObjectURL(file));
+      scheduleStableMirror(campaign.id);
       const gridPos = gridPosForTokenCenteredAtScreen(
         screen,
         { x: stageX, y: stageY },
@@ -1997,6 +2015,7 @@ export const useStore = create<AppStore>((set, get) => ({
     const layout = updater(base);
     set({ globalTokenLibraryLayout: layout });
     void saveTokenLibraryLayout(GLOBAL_CAMPAIGN_ID, layout);
+    scheduleStableGlobalMirror();
   },
   saveTokenToLibraryGroup: (scope, groupId) => {
     const state = get();
@@ -2136,10 +2155,10 @@ export function useLiveViewport(): { x: number; y: number; scale: number } {
   return gesture ?? { x, y, scale };
 }
 
-export function createAndSetCampaign(name: string) {
+export async function createAndSetCampaign(name: string): Promise<Campaign> {
   const campaign = createCampaign(name);
   useStore.getState().setCampaign(campaign);
-  void useStore.getState().persist();
+  await useStore.getState().persist();
   return campaign;
 }
 

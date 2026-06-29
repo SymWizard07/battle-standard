@@ -1,5 +1,6 @@
 import { referencedAssetIds } from '../lib/campaignAssets';
 import { loadAsset, saveAsset, type StoredAsset } from '../lib/db';
+import { scheduleStableMirror } from '../lib/stableStorage';
 import type { Campaign } from '../lib/types';
 import { publishAsset, type AssetMetadata } from '../net/trysteroRoom';
 import { useStore } from '../store/useStore';
@@ -51,6 +52,7 @@ export async function handleRemoteAsset(
     kind,
   });
   await ensureAssetUrlRegistered(assetId, blob);
+  scheduleStableMirror(campaignId);
 }
 
 export function clearAssetSyncState(): void {

@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "lib": ["ES2022", "DOM"],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "types": ["chrome"]
+  },
+  "include": ["src/**/*.ts", "../protocol/messages.ts", "../protocol/constants.ts"],
+  "exclude": ["../protocol/protocol.test.ts"]
+}

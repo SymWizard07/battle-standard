@@ -18,7 +18,10 @@
     "noUncheckedSideEffectImports": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["vite/client", "node"]
+    "types": ["vite/client", "node"],
+    "paths": {
+      "@companion/protocol": ["./companion/protocol/index.ts"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", "companion/protocol"]
 }

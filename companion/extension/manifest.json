@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Battle Standard Save Helper",
+  "description": "Saves Battle Standard campaigns to a folder on your computer via a native helper.",
+  "version": "0.1.0",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://localhost:5173/*",
+        "http://localhost:5173/*",
+        "https://127.0.0.1:5173/*",
+        "http://127.0.0.1:5173/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": ["nativeMessaging"],
+  "externally_connectable": {
+    "matches": [
+      "https://localhost:5173/*",
+      "http://localhost:5173/*",
+      "https://127.0.0.1:5173/*",
+      "http://127.0.0.1:5173/*"
+    ]
+  }
+}

@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import type { Campaign, TokenLibraryLayout } from './types';
+import { GLOBAL_CAMPAIGN_ID } from './types';
 
 export interface StoredAsset {
   id: string;
@@ -17,10 +18,16 @@ export interface StoredTokenLibraryLayout {
   layout: TokenLibraryLayout;
 }
 
+export interface StoredRootHandle {
+  id: 'root';
+  handle: FileSystemDirectoryHandle;
+}
+
 class BattleMapDB extends Dexie {
   campaigns!: Table<Campaign, string>;
   assets!: Table<StoredAsset, string>;
   tokenLibraryLayouts!: Table<StoredTokenLibraryLayout, string>;
+  storageRoot!: Table<StoredRootHandle, string>;
 
   constructor() {
     super('BattleMapDB');
@@ -32,6 +39,12 @@ class BattleMapDB extends Dexie {
       campaigns: 'id, updatedAt',
       assets: 'id, campaignId',
       tokenLibraryLayouts: 'scopeId',
+    });
+    this.version(3).stores({
+      campaigns: 'id, updatedAt',
+      assets: 'id, campaignId',
+      tokenLibraryLayouts: 'scopeId',
+      storageRoot: 'id',
     });
   }
 }
@@ -85,4 +98,56 @@ export async function saveTokenLibraryLayout(
   layout: TokenLibraryLayout,
 ): Promise<void> {
   await db.tokenLibraryLayouts.put({ scopeId, layout });
+}
+
+export async function importCampaignBundle(
+  campaign: Campaign,
+  assets: StoredAsset[],
+): Promise<void> {
+  await db.transaction('rw', [db.campaigns, db.assets], async () => {
+    await db.campaigns.put(campaign);
+    await db.assets.where('campaignId').equals(campaign.id).delete();
+    for (const asset of assets) {
+      await db.assets.put(asset);
+    }
+  });
+}
+
+export type DiskImportMode = 'merge' | 'authoritative';
+
+/** When mode is merge, keep local IndexedDB data if it is newer than disk. */
+export function shouldImportCampaignFromDisk(
+  local: Campaign | undefined,
+  disk: Campaign,
+  mode: DiskImportMode,
+): boolean {
+  if (mode === 'authoritative') return true;
+  if (!local) return true;
+  return disk.updatedAt > local.updatedAt;
+}
+
+export async function importCampaignBundleFromDisk(
+  campaign: Campaign,
+  assets: StoredAsset[],
+  mode: DiskImportMode = 'merge',
+): Promise<boolean> {
+  const local = await loadCampaign(campaign.id);
+  if (!shouldImportCampaignFromDisk(local, campaign, mode)) return false;
+  await importCampaignBundle(campaign, assets);
+  return true;
+}
+
+export async function importGlobalBundle(
+  layout: TokenLibraryLayout | undefined,
+  assets: StoredAsset[],
+): Promise<void> {
+  await db.transaction('rw', [db.assets, db.tokenLibraryLayouts], async () => {
+    if (layout) {
+      await db.tokenLibraryLayouts.put({ scopeId: GLOBAL_CAMPAIGN_ID, layout });
+    }
+    await db.assets.where('campaignId').equals(GLOBAL_CAMPAIGN_ID).delete();
+    for (const asset of assets) {
+      await db.assets.put(asset);
+    }
+  });
 }

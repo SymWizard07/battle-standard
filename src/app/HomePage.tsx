@@ -12,6 +12,8 @@ import { PasteIcon } from '../features/session/PasteIcon';
 import { RoomCodeInput } from '../features/session/RoomCodeInput';
 import { PlayAreaGridBackground, PlayAreaGridBackgroundBlurred } from '../features/layout/PlayAreaGridBackground';
 import { ScatteredGridTokens } from '../features/layout/ScatteredGridTokens';
+import { SaveFolderSection } from '../features/storage/SaveFolderSection';
+import { deleteCampaignFromStorage, preferSyncFromDisk } from '../lib/companion/companionStorage';
 
 const fieldLabel = 'mb-2 text-sm font-medium text-slate-400';
 const fieldRow = 'grid w-full grid-cols-[minmax(0,1fr)_7.5rem] items-center gap-2';
@@ -57,26 +59,27 @@ export function HomePage() {
 
   useEffect(() => {
     refresh();
+    void preferSyncFromDisk().then(() => refresh());
   }, []);
 
   useDocumentTitle(formatDocumentTitle('Campaigns'));
 
   const create = async () => {
     const trimmed = name.trim() || 'New Campaign';
-    const c = createAndSetCampaign(trimmed);
+    const c = await createAndSetCampaign(trimmed);
     setName('');
     refresh();
     navigate(`/campaign/${c.id}`);
   };
 
-  const joinSession = (codeOverride?: string) => {
+  const joinSession = async (codeOverride?: string) => {
     const code = normalizeRoomCode(codeOverride ?? joinCode);
     const displayName = playerName.trim();
     if (!code || !displayName) return;
 
     setJoinError('');
     useStore.getState().setPlayerName(displayName);
-    const c = createAndSetCampaign(`Session ${code}`);
+    const c = await createAndSetCampaign(`Session ${code}`);
     savePendingJoin({ roomCode: code, playerName: displayName, campaignId: c.id });
     setJoinCode('');
     refresh();
@@ -174,6 +177,10 @@ export function HomePage() {
               {joinError && <p className={fieldError}>{joinError}</p>}
             </section>
 
+            <section className={`shrink-0 ${sectionDivider}`}>
+              <SaveFolderSection campaignCount={campaigns.length} onStorageChange={refresh} />
+            </section>
+
             <section className={`shrink-0 pb-2 ${sectionDivider}`}>
               <h2 className={fieldLabel}>Your campaigns</h2>
               {campaigns.length === 0 ? (
@@ -202,7 +209,15 @@ export function HomePage() {
                             tone: 'danger',
                           });
                           if (!confirmed) return;
-                          void deleteCampaign(c.id).then(refresh);
+                          const id = c.id;
+                          setCampaigns((prev) => prev.filter((campaign) => campaign.id !== id));
+                          try {
+                            await deleteCampaign(id);
+                          } catch {
+                            refresh();
+                            return;
+                          }
+                          void deleteCampaignFromStorage(id);
                         }}
                       >
                         Delete

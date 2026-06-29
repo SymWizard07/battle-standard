@@ -1,6 +1,6 @@
 # Battle Standard
 
-Scene-deck VTT tracker for D&D 5e.
+Scene-deck VTT tracker for D&D 5e — grid, tokens, fog, ruler, and optional **Save Helper** for disk backups.
 
 ## Local development
 
@@ -9,7 +9,25 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173 (or use `npm run dev -- --host` for LAN access).
+Open http://localhost:5173 (or `npm run dev:host` for LAN access).
+
+## Save Helper (optional)
+
+Save campaigns to a folder on your computer via extension + native host + tray app. See **[companion/README.md](companion/README.md)** for install steps, troubleshooting, and E2E checklist.
+
+Quick start:
+
+```bash
+npm run companion:tray:build
+npm run companion:extension:build
+npm run companion:tray:start
+```
+
+Run all companion tests:
+
+```bash
+npm run test:companion
+```
 
 ## Publish to GitHub Pages
 

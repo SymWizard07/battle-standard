@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { CampaignsBackButton } from '../CampaignsBackButton';
+import { StableStorageIndicator } from '../../storage/StableStorageIndicator';
 import { InfoModal } from '../../settings/InfoModal';
 import { useActiveScene, useStore } from '../../../store/useStore';
 
@@ -15,6 +16,7 @@ export function SessionHeaderModule() {
       <h1 className="min-w-0 truncate text-sm font-semibold text-slate-100">
         {scene?.name ?? campaign.name}
       </h1>
+      <StableStorageIndicator />
     </header>
   );
 }

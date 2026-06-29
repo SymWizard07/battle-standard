@@ -1,7 +1,7 @@
 import { isTokenLockedForPlayers } from '../lib/tokenVisibility';
 import type { Campaign, SceneId, SessionRole } from '../lib/types';
 import { deepEqual } from '../lib/history/equal';
-import { useStore } from '../store/useStore';
+import { flushPersistFromSync, schedulePersistFromSync, useStore } from '../store/useStore';
 import { selfId } from '@trystero-p2p/mqtt';
 import {
   announcePresence,
@@ -32,6 +32,10 @@ import {
   wireGmAssetSync,
 } from './assetSync';
 import { mergeCampaignForSync } from './campaignMerge';
+import {
+  shouldFlushPersistOnDisconnect,
+  shouldPersistAfterRemoteMerge,
+} from './syncRemotePersist';
 import {
   attachLiveSync,
   stripLiveSync,
@@ -220,6 +224,9 @@ function applyRemoteCampaign(json: string, role: SessionRole): void {
         markPlayerConnected();
       }
       syncSession.applyingRemote = false;
+      if (shouldPersistAfterRemoteMerge(role, false)) {
+        schedulePersistFromSync();
+      }
     } else if (role === 'player') {
       markPlayerConnected();
     }
@@ -382,7 +389,14 @@ export function disconnectSync(options?: { intentional?: boolean }): void {
   intentionalDisconnect = intentional;
   suppressReconnect = true;
   stopReconnectLoop();
-  void teardownSession();
+
+  const state = useStore.getState();
+  const preTeardown =
+    shouldFlushPersistOnDisconnect(state.role, state.campaign != null)
+      ? flushPersistFromSync()
+      : Promise.resolve();
+
+  void preTeardown.then(() => teardownSession());
 
   if (intentional) {
     clearSession();

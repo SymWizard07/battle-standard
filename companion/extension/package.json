@@ -1,0 +1,18 @@
+{
+  "name": "@battle-standard/save-extension",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Browser extension bridge for Battle Standard native save helper",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:firefox": "node scripts/build.mjs --firefox",
+    "package:amo-source": "node scripts/package-amo-source.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "dev": "node scripts/build.mjs --watch"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.322",
+    "esbuild": "^0.25.0",
+    "typescript": "~6.0.2"
+  }
+}

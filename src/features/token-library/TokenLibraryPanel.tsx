@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { GLOBAL_CAMPAIGN_ID } from '../../lib/types';
 import { loadCampaignAssets, saveAsset } from '../../lib/db';
+import { scheduleStableGlobalMirror, scheduleStableMirror } from '../../lib/stableStorage';
 import { isTokenLibraryAsset, mapAssetIdsInCampaign } from '../../lib/campaignAssets';
 import { newId } from '../../lib/ids';
 import {
@@ -139,6 +140,11 @@ export function TokenLibraryPanel({ variant, open, onClose }: Props) {
     });
     registerAssetUrl(assetId, URL.createObjectURL(file));
     onLayoutChange((l) => addAssetEntryToGroup(l, IMPORT_GROUP_ID, assetId, file.name, true));
+    if (tab === 'global') {
+      scheduleStableGlobalMirror();
+    } else if (campaign?.id) {
+      scheduleStableMirror(campaign.id);
+    }
   };
 
   const panel = (

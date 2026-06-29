@@ -18,9 +18,10 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install tray dependencies
-        working-directory: companion/tray
-        run: npm ci
+      - name: Install dependencies
+        run: |
+          npm ci --prefix companion/host
+          npm ci --prefix companion/tray
 
       - name: Build and pack portable Windows app
         working-directory: companion/tray

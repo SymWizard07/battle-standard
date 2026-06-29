@@ -4,6 +4,11 @@
   "version": "0.1.0",
   "description": "Battle Standard Save Helper — system tray app",
   "author": "Battle Standard",
+  "homepage": "https://symwizard07.github.io/battle-standard/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SymWizard07/battle-standard.git"
+  },
   "main": "dist/main.cjs",
   "scripts": {
     "build": "node scripts/build.mjs",

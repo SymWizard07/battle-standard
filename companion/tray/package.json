@@ -9,7 +9,10 @@
     "build": "node scripts/build.mjs",
     "start": "electron .",
     "dev": "npm run build && electron .",
-    "pack": "npm run build && electron-builder --win portable",
+    "pack": "npm run build && electron-builder --win portable --x64",
+    "pack:win": "npm run build && electron-builder --win",
+    "pack:mac": "npm run build && electron-builder --mac",
+    "pack:linux": "npm run build && electron-builder --linux",
     "pack:dir": "npm run build && electron-builder --win dir",
     "typecheck": "tsc -p tsconfig.json",
     "test": "tsx config.integration.test.ts",
@@ -44,7 +47,15 @@
         {
           "target": "portable",
           "arch": [
-            "x64"
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
           ]
         }
       ],
@@ -53,7 +64,52 @@
       "signAndEditExecutable": false
     },
     "portable": {
-      "artifactName": "Battle-Standard-Save-Helper-${version}-portable.exe"
+      "artifactName": "Battle-Standard-Save-Helper-${version}-portable-${arch}.exe"
+    },
+    "nsis": {
+      "artifactName": "Battle-Standard-Save-Helper-${version}-setup-${arch}.exe",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "resources/icon-256.png",
+      "category": "public.app-category.utilities",
+      "identity": null,
+      "artifactName": "Battle-Standard-Save-Helper-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "artifactName": "Battle-Standard-Save-Helper-${version}-${arch}.dmg"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "resources/icon-256.png",
+      "category": "Utility",
+      "maintainer": "Battle Standard",
+      "artifactName": "Battle-Standard-Save-Helper-${version}-${arch}.${ext}"
     }
   },
   "devDependencies": {

@@ -4,7 +4,7 @@ Optional **Save Helper** for writing campaigns to a real folder on disk — via 
 
 ## Quick install (production)
 
-**End users:** download the portable tray app from [GitHub Releases](https://github.com/SymWizard07/battle-standard/releases) (tag `save-helper-v*`) and install the [Firefox extension (v0.1.0)](https://addons.mozilla.org/firefox/downloads/file/4873162/c499cfaf782b48d1996b-0.1.0.xpi) from Mozilla Add-ons. Run the tray app, choose a save folder, then open Battle Standard — Firefox native messaging registers automatically.
+**End users:** download the tray app for your platform from [GitHub Releases](https://github.com/SymWizard07/battle-standard/releases) (tag `save-helper-v*`) — Windows (portable or installer, x64/arm64), macOS (`.dmg`), or Linux (`.AppImage` / `.deb`) — and install the [Firefox extension (v0.1.0)](https://addons.mozilla.org/firefox/downloads/file/4873162/c499cfaf782b48d1996b-0.1.0.xpi) from Mozilla Add-ons. Run the tray app, choose a save folder, then open Battle Standard — Firefox native messaging registers automatically.
 
 **Developers** (from repo):
 

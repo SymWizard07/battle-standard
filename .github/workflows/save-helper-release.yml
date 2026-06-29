@@ -9,8 +9,18 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    runs-on: windows-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            pack: pack:win
+          - os: macos-latest
+            pack: pack:mac
+          - os: ubuntu-latest
+            pack: pack:linux
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,15 +33,30 @@ jobs:
           npm ci --prefix companion/host
           npm ci --prefix companion/tray
 
-      - name: Build and pack portable Windows app
+      - name: Build and pack
         working-directory: companion/tray
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: npm run pack
+        run: npm run ${{ matrix.pack }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: save-helper-${{ matrix.os }}
+          path: companion/tray/release/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
 
       - name: Extract version from tag
         id: version
-        shell: bash
         run: echo "version=${GITHUB_REF_NAME#save-helper-v}" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
@@ -46,18 +71,29 @@ jobs:
 
             ### Install
 
-            1. Download **Battle-Standard-Save-Helper-${{ steps.version.outputs.version }}-portable.exe** below.
-            2. Run it — choose a save folder from the tray menu.
+            1. Download the build for your platform below.
+            2. Run the tray app — choose a save folder from the menu.
             3. Install the [Firefox extension](https://addons.mozilla.org/firefox/downloads/file/4873162/c499cfaf782b48d1996b-0.1.0.xpi) (Mozilla Add-ons, v0.1.0).
             4. Open Battle Standard and confirm Save Helper shows connected.
+
+            ### Downloads
+
+            | Platform | Files |
+            |----------|-------|
+            | **Windows x64** | `*-portable-x64.exe` or `*-setup-x64.exe` (installer) |
+            | **Windows arm64** | `*-portable-arm64.exe` or `*-setup-arm64.exe` (installer) |
+            | **macOS Intel** | `*-x64.dmg` |
+            | **macOS Apple Silicon** | `*-arm64.dmg` |
+            | **Linux x64** | `*-x64.AppImage` or `*-x64.deb` |
+            | **Linux arm64** | `*-arm64.AppImage` or `*-arm64.deb` |
 
             Firefox native messaging is registered automatically when the tray app starts.
 
             ### Notes
 
             - Campaigns still save in the browser without Save Helper.
-            - Portable build — run the `.exe` directly (add to Startup if desired).
-          files: |
-            companion/tray/release/Battle-Standard-Save-Helper-*.exe
+            - macOS builds are unsigned — you may need to allow the app in System Settings → Privacy & Security.
+            - Windows portable builds run directly (add to Startup if desired).
+          files: artifacts/**
           draft: false
           prerelease: false

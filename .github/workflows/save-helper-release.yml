@@ -39,11 +39,27 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: npm run ${{ matrix.pack }}
 
+      - name: Collect distributables
+        working-directory: companion/tray
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          shopt -s nullglob
+          for f in release/*.exe release/*.dmg release/*.AppImage release/*.deb; do
+            cp "$f" release-assets/
+          done
+          if [ ! "$(ls -A release-assets)" ]; then
+            echo "No distributables found"
+            ls -la release
+            exit 1
+          fi
+          ls -la release-assets
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: save-helper-${{ matrix.os }}
-          path: companion/tray/release/*
+          path: companion/tray/release-assets/
           if-no-files-found: error
 
   release:
@@ -59,11 +75,15 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#save-helper-v}" >> "$GITHUB_OUTPUT"
 
+      - name: List release files
+        run: find artifacts -maxdepth 1 -type f | sort
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: Save Helper v${{ steps.version.outputs.version }}
+          overwrite: true
           body: |
             ## Battle Standard Save Helper v${{ steps.version.outputs.version }}
 
@@ -84,7 +104,7 @@ jobs:
             | **Windows arm64** | `*-portable-arm64.exe` or `*-setup-arm64.exe` (installer) |
             | **macOS Intel** | `*-x64.dmg` |
             | **macOS Apple Silicon** | `*-arm64.dmg` |
-            | **Linux x64** | `*-x64.AppImage` or `*-x64.deb` |
+            | **Linux x64** | `*-x86_64.AppImage` or `*-amd64.deb` |
             | **Linux arm64** | `*-arm64.AppImage` or `*-arm64.deb` |
 
             Firefox native messaging is registered automatically when the tray app starts.
@@ -94,6 +114,10 @@ jobs:
             - Campaigns still save in the browser without Save Helper.
             - macOS builds are unsigned — you may need to allow the app in System Settings → Privacy & Security.
             - Windows portable builds run directly (add to Startup if desired).
-          files: artifacts/**
+          files: |
+            artifacts/*.exe
+            artifacts/*.dmg
+            artifacts/*.AppImage
+            artifacts/*.deb
           draft: false
           prerelease: false

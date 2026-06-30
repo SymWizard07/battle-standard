@@ -1,4 +1,9 @@
-import { detectDesktopBrowser, type DesktopBrowser } from '../../lib/stableStorage/featureDetect';
+import {
+  browserDisplayName,
+  chromiumFileSystemFlagUrl,
+  detectDesktopBrowser,
+  type DesktopBrowser,
+} from '../../lib/stableStorage/featureDetect';
 
 export type NoticeTone = 'success' | 'warning' | 'info' | 'muted' | 'error';
 
@@ -59,12 +64,13 @@ function installSteps(browser: DesktopBrowser): string[] {
         'Run the one-time Save Helper setup app for your OS',
         'Choose a save folder here when prompted',
       ];
+    case 'brave':
     case 'chrome':
     case 'edge':
       return [
-        'Run the one-time Save Helper setup app',
-        'Load the unpacked extension in your browser',
-        'Choose a save folder on this page',
+        'Enable the File System Access API in your browser settings (see Browser folder below).',
+        'Reload this page, then click “Link folder…”.',
+        'Pick a folder — campaigns mirror there automatically.',
       ];
     default:
       return [
@@ -96,24 +102,56 @@ export function unsupportedBrowserGuide(): {
     case 'safari':
       return {
         title: 'Safari can’t link a folder here',
-        body: 'Use Save Helper on desktop, switch to Chrome or Edge, or export a backup below.',
-      };
-    case 'edge':
-      return {
-        title: 'This Edge build can’t link a folder',
-        body: 'Update Edge, use Save Helper above, or export a backup below.',
-      };
-    case 'chrome':
-      return {
-        title: 'This Chrome build can’t link a folder',
-        body: 'Update Chrome, use Save Helper above, or export a backup below.',
+        body: 'Try Chrome or Edge on desktop, or export a backup below.',
       };
     default:
       return {
         title: 'Folder linking isn’t available',
-        body: 'Try Save Helper, Chrome or Edge on desktop, or export a backup below.',
+        body: 'Try Chrome or Edge on desktop, or export a backup below.',
       };
   }
+}
+
+export type ChromiumFolderGuide = {
+  title: string;
+  intro: string;
+  steps: string[];
+  flagUrl: string;
+  insecureContext: boolean;
+};
+
+/** Steps to turn on in-browser folder saves when showDirectoryPicker is missing (common on Brave). */
+export function chromiumBrowserFolderGuide(): ChromiumFolderGuide {
+  const browser = detectDesktopBrowser();
+  const name = browserDisplayName(browser);
+  const flagUrl = chromiumFileSystemFlagUrl(browser);
+
+  if (typeof window !== 'undefined' && !window.isSecureContext) {
+    return {
+      title: `${name} needs a secure connection`,
+      intro:
+        'Folder linking only works on HTTPS (or localhost). Open Battle Standard from the official site link, then try again.',
+      steps: [
+        'Use https://symwizard07.github.io/battle-standard/ (not an insecure mirror).',
+        'Reload this page after the address bar shows a lock icon.',
+        'Click “Link folder…” when it appears below.',
+      ],
+      flagUrl: '',
+      insecureContext: true,
+    };
+  }
+
+  return {
+    title: `Enable folder saves in ${name}`,
+    intro: `${name} can save campaigns to a folder on your computer — no extension required. Some Chromium browsers ship with folder access turned off until you enable it once.`,
+    steps: [
+      'Open a new tab, paste the settings address below into the address bar, and press Enter.',
+      'Find “File System Access API” and set it to Enabled.',
+      `Relaunch ${name}, return to Battle Standard, and click “Link folder…” below.`,
+    ],
+    flagUrl,
+    insecureContext: false,
+  };
 }
 
 export function formatActionError(raw: string): ActionMessage {

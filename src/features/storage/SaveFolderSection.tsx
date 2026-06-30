@@ -20,10 +20,15 @@ import {
 } from '../../lib/stableStorage';
 import { ensureWritableAccess } from '../../lib/stableStorage/permissions';
 import { loadRootHandle } from '../../lib/stableStorage/handleStore';
-import { supportsStableStorage } from '../../lib/stableStorage/featureDetect';
+import {
+  detectDesktopBrowser,
+  isChromiumBrowser,
+  supportsStableStorage,
+} from '../../lib/stableStorage/featureDetect';
 import { InlineActionStatus, StorageNotice } from './StorageNotice';
 import { SaveHelperInstallPanel, type SaveHelperInstallStep } from './SaveHelperInstallPanel';
 import {
+  chromiumBrowserFolderGuide,
   companionDisconnectedGuide,
   formatActionError,
   formatActionInfo,
@@ -68,6 +73,7 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
   const [folderActionStatus, setFolderActionStatus] = useState<ActionMessage | null>(null);
   const [showPushLocal, setShowPushLocal] = useState(false);
   const [showDivergent, setShowDivergent] = useState(false);
+  const [flagCopyStatus, setFlagCopyStatus] = useState<string | null>(null);
 
   const fs = unified?.fsAccess;
   const companion = unified?.companion;
@@ -230,8 +236,24 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
   };
 
   const disconnected = companionDisconnectedGuide(companion?.error ?? null);
-  const unsupported = unsupportedBrowserGuide();
+  const browser = detectDesktopBrowser();
+  const isFirefox = browser === 'firefox';
+  const isChromium = isChromiumBrowser(browser);
+  const showSaveHelper = isFirefox || companionActive;
+  const showBrowserFolder = isChromium || supported;
+  const chromiumGuide = !supported && isChromium ? chromiumBrowserFolderGuide() : null;
   const step = companion ? installStep(companion) : 'extension';
+  const folderFallback = unsupportedBrowserGuide();
+
+  const onCopyFlagUrl = async () => {
+    if (!chromiumGuide?.flagUrl) return;
+    try {
+      await navigator.clipboard.writeText(chromiumGuide.flagUrl);
+      setFlagCopyStatus('Copied — paste into your browser’s address bar.');
+    } catch {
+      setFlagCopyStatus('Copy failed — select the address below and copy manually.');
+    }
+  };
 
   const onRecheckInstall = () => {
     void refreshStatus();
@@ -263,6 +285,7 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
         </p>
       </div>
 
+      {showSaveHelper && (
       <div className="space-y-3">
         <h3 className="text-xs font-medium uppercase tracking-wide text-slate-500">Save Helper</h3>
         {!companionActive && step && (
@@ -301,18 +324,57 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
           </StorageNotice>
         )}
       </div>
+      )}
 
-      {supported && (
+      {showBrowserFolder && (
         <div className="space-y-3 border-t border-slate-600/40 pt-4">
           <h3 className="text-xs font-medium uppercase tracking-wide text-slate-500">
             Browser folder
           </h3>
 
-          {!fs?.linked && (
+          {!supported && chromiumGuide && (
             <div className="space-y-3">
-              <StorageNotice tone="info" title="Optional browser backup">
-                Link a folder in this browser for saves when Save Helper isn’t available — useful on
-                another computer.
+              <StorageNotice tone="info" title={chromiumGuide.title} steps={chromiumGuide.steps}>
+                {chromiumGuide.intro}
+              </StorageNotice>
+              {!chromiumGuide.insecureContext && chromiumGuide.flagUrl && (
+                <div className="space-y-2 rounded-xl border border-slate-500/40 bg-slate-950/35 px-4 py-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Settings address
+                  </p>
+                  <code className="block break-all text-sm text-sky-200">{chromiumGuide.flagUrl}</code>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" className={btnPrimary} onClick={() => void onCopyFlagUrl()}>
+                      Copy settings address
+                    </button>
+                    <button
+                      type="button"
+                      className={btnSecondary}
+                      disabled={busy}
+                      onClick={() => void refreshStatus()}
+                    >
+                      I enabled it — reload check
+                    </button>
+                  </div>
+                  {flagCopyStatus && (
+                    <p className="text-xs text-slate-400" role="status">
+                      {flagCopyStatus}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {supported && !fs?.linked && (
+            <div className="space-y-3">
+              <StorageNotice
+                tone="info"
+                title={isFirefox ? 'Optional browser backup' : 'Link a save folder'}
+              >
+                {isFirefox
+                  ? 'Link a folder in this browser for saves when Save Helper isn’t available — useful on another computer.'
+                  : 'Pick a folder on your computer — campaigns mirror there automatically while you play.'}
               </StorageNotice>
               <button
                 type="button"
@@ -325,7 +387,7 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
             </div>
           )}
 
-          {fs?.linked && fs.permission === 'granted' && (
+          {supported && fs?.linked && fs.permission === 'granted' && (
             <div className="space-y-3">
               <StorageNotice tone="success" title={`Linked: ${fs.folderName}`}>
                 {unified?.activeBackend === 'fsAccess' && unified.lastSyncedAt != null && (
@@ -349,7 +411,7 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
             </div>
           )}
 
-          {fs?.linked && fs.permission === 'prompt' && (
+          {supported && fs?.linked && fs.permission === 'prompt' && (
             <div className="space-y-3">
               <StorageNotice tone="warning" title="Allow folder access">
                 Re-enable saving to <span className="font-medium">{fs.folderName}</span> for this
@@ -366,7 +428,7 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
             </div>
           )}
 
-          {fs?.linked && fs.permission === 'denied' && (
+          {supported && fs?.linked && fs.permission === 'denied' && (
             <div className="space-y-3">
               <StorageNotice tone="warning" title="Folder access denied">
                 Saving to <span className="font-medium">{fs.folderName}</span> was blocked.
@@ -384,10 +446,10 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
         </div>
       )}
 
-      {!supported && !companionActive && (
+      {!supported && !isChromium && !companionActive && (
         <div className="space-y-3 border-t border-slate-600/40 pt-4">
-          <StorageNotice tone="muted" title={unsupported.title}>
-            {unsupported.body}
+          <StorageNotice tone="muted" title={folderFallback.title}>
+            {folderFallback.body}
           </StorageNotice>
           <button
             type="button"

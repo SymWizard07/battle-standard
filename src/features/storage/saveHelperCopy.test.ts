@@ -3,10 +3,12 @@
  * Run: npm run test:companion-web
  */
 import {
+  chromiumBrowserFolderGuide,
   companionDisconnectedGuide,
   formatActionError,
   sanitizeCompanionError,
 } from './saveHelperCopy';
+import { chromiumFileSystemFlagUrl } from '../../lib/stableStorage/featureDetect';
 
 function assertEqual<T>(actual: T, expected: T, message?: string): void {
   if (actual !== expected) {
@@ -39,10 +41,35 @@ function testFormatActionError() {
   assertEqual(ext.title, 'Save Helper extension needs an update');
 }
 
+function testBraveChromiumGuide() {
+  const original = globalThis.navigator;
+  try {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        brave: {},
+      },
+    });
+    assertEqual(chromiumFileSystemFlagUrl('brave'), 'brave://flags/#file-system-access-api');
+    const guide = chromiumBrowserFolderGuide();
+    assertEqual(guide.title, 'Enable folder saves in Brave');
+    assertEqual(guide.flagUrl, 'brave://flags/#file-system-access-api');
+    assertEqual(guide.steps.length, 3);
+  } finally {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: original,
+    });
+  }
+}
+
 function runTests() {
   testSanitizeExtensionId();
   testDisconnectedGuide();
   testFormatActionError();
+  testBraveChromiumGuide();
   console.log('[automated] saveHelperCopy tests passed');
 }
 

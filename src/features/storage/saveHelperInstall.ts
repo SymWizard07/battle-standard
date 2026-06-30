@@ -4,9 +4,9 @@ export const SAVE_HELPER_EXTENSION_VERSION = '0.1.1';
 export const SAVE_HELPER_RELEASE_TAG = `save-helper-v${SAVE_HELPER_VERSION}`;
 export const GITHUB_REPO = 'SymWizard07/battle-standard';
 
-/** AMO listing — always installs the latest approved version. */
+/** Direct AMO download for the signed Firefox add-on (v0.1.1). */
 export const FIREFOX_EXTENSION_INSTALL_URL =
-  'https://addons.mozilla.org/firefox/addon/battle-standard-save-helper/';
+  'https://addons.mozilla.org/firefox/downloads/file/4874894/c499cfaf782b48d1996b-0.1.1.xpi';
 
 export const SAVE_HELPER_RELEASES_PAGE = `https://github.com/${GITHUB_REPO}/releases/tag/${SAVE_HELPER_RELEASE_TAG}`;
 

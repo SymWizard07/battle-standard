@@ -6,7 +6,7 @@ Optional **Save Helper** for writing campaigns to a real folder on disk — via 
 
 **End users:**
 
-1. Install the [Firefox extension](https://addons.mozilla.org/firefox/addon/battle-standard-save-helper/) from Mozilla Add-ons (v0.1.1+ required for choosing a save folder on the site).
+1. Install the [Firefox extension (v0.1.1)](https://addons.mozilla.org/firefox/downloads/file/4874894/c499cfaf782b48d1996b-0.1.1.xpi) from Mozilla Add-ons.
 2. Download and run the **Setup** app for your platform from [GitHub Releases](https://github.com/SymWizard07/battle-standard/releases) (tag `save-helper-v*`).
 3. Open Battle Standard → choose a save folder when prompted (opens your OS folder dialog).
 
@@ -49,7 +49,7 @@ Firefox requires Mozilla-signed add-ons unless you use a temporary add-on from `
 2. Create a [Mozilla Add-on Developer](https://addons.mozilla.org/developers/) account
 3. **Submit a New Add-on** → upload the zip → choose **On your own** (self-distribution) or listed
 4. When asked **“Do you need to submit source code?”** → **Yes** (the build uses **esbuild** to bundle TypeScript). Upload `companion/extension/dist-firefox-source.zip` from `npm run package:amo-source --prefix companion/extension`. Reviewer notes can point to `README.md` in the source archive.
-5. After review, download the **signed `.xpi`** from the developer hub, or install the published build: [Firefox extension v0.1.0](https://addons.mozilla.org/firefox/downloads/file/4873162/c499cfaf782b48d1996b-0.1.0.xpi)
+5. After review, download the **signed `.xpi`** from the developer hub, or install the published build: [Firefox extension v0.1.1](https://addons.mozilla.org/firefox/downloads/file/4874894/c499cfaf782b48d1996b-0.1.1.xpi)
 6. `about:addons` → gear → **Install Add-on From File…** → pick the signed `.xpi` (skip if installed from the link above)
 7. Native host is already registered for `battle-standard-save@dev` — no re-register needed
 

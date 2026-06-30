@@ -32,8 +32,11 @@ function testFormatActionError() {
   assertEqual(msg.tone, 'warning');
   assertEqual(msg.title, 'Folder permission needed');
 
-  const stale = formatActionError('Unsupported message type');
-  assertEqual(stale.title, 'Save Helper extension needs an update');
+  const stale = formatActionError('Unknown message type');
+  assertEqual(stale.title, 'Save Helper setup needs an update');
+
+  const ext = formatActionError('Unsupported message type');
+  assertEqual(ext.title, 'Save Helper extension needs an update');
 }
 
 function runTests() {

@@ -1,6 +1,8 @@
 /** Save Helper release metadata — keep in sync with companion/tray/package.json version. */
-export const SAVE_HELPER_VERSION = '0.1.0';
+export const SAVE_HELPER_VERSION = '0.1.1';
 export const SAVE_HELPER_EXTENSION_VERSION = '0.1.1';
+/** Native host must be at least this version for on-site folder picker. */
+export const SAVE_HELPER_MIN_HOST_VERSION = '0.1.1';
 export const SAVE_HELPER_RELEASE_TAG = `save-helper-v${SAVE_HELPER_VERSION}`;
 export const GITHUB_REPO = 'SymWizard07/battle-standard';
 
@@ -136,6 +138,28 @@ export function firefoxExtensionInstallSteps(): string[] {
     'Click Install extension below — Firefox will ask to confirm.',
     'Choose Add (or Allow) when prompted.',
     'Click “I installed it — check again” when the add-on is enabled.',
+  ];
+}
+
+function parseVersionParts(version: string): [number, number, number] {
+  const [major = 0, minor = 0, patch = 0] = version.split('.').map((n) => parseInt(n, 10) || 0);
+  return [major, minor, patch];
+}
+
+export function hostSupportsFolderPicker(hostVersion: string | null | undefined): boolean {
+  if (!hostVersion) return false;
+  const [aM, aN, aP] = parseVersionParts(hostVersion);
+  const [bM, bN, bP] = parseVersionParts(SAVE_HELPER_MIN_HOST_VERSION);
+  if (aM !== bM) return aM > bM;
+  if (aN !== bN) return aN > bN;
+  return aP >= bP;
+}
+
+export function setupUpdateSteps(osLabel: string): string[] {
+  return [
+    `Download and run the latest setup app for ${osLabel} again.`,
+    'This updates the native host in the background (safe to re-run).',
+    'Return here and click “I ran setup — check again”.',
   ];
 }
 

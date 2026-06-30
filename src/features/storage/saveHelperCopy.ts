@@ -118,7 +118,15 @@ export function unsupportedBrowserGuide(): {
 
 export function formatActionError(raw: string): ActionMessage {
   const text = sanitizeCompanionError(raw);
-  if (text.includes('Unsupported message type') || text.includes('Unknown message type')) {
+  if (text.includes('Unknown message type')) {
+    return {
+      tone: 'warning',
+      title: 'Save Helper setup needs an update',
+      detail:
+        'The native host on your computer is out of date. Download and run the latest Save Helper setup app again, then retry.',
+    };
+  }
+  if (text.includes('Unsupported message type')) {
     return {
       tone: 'warning',
       title: 'Save Helper extension needs an update',

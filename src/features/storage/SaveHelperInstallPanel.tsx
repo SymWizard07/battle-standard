@@ -4,8 +4,10 @@ import {
   FIREFOX_EXTENSION_INSTALL_URL,
   firefoxExtensionInstallSteps,
   getSaveHelperSetupDownload,
+  hostSupportsFolderPicker,
   SAVE_HELPER_RELEASES_PAGE,
   setupInstallSteps,
+  setupUpdateSteps,
 } from './saveHelperInstall';
 
 const btn =
@@ -18,12 +20,13 @@ export type SaveHelperInstallStep = 'extension' | 'setup' | 'folder';
 
 type Props = {
   step: SaveHelperInstallStep;
+  hostVersion?: string | null;
   onRecheck: () => void;
   onChooseFolder: () => void;
   busy?: boolean;
 };
 
-export function SaveHelperInstallPanel({ step, onRecheck, onChooseFolder, busy }: Props) {
+export function SaveHelperInstallPanel({ step, hostVersion, onRecheck, onChooseFolder, busy }: Props) {
   const browser = detectDesktopBrowser();
   const setup = getSaveHelperSetupDownload();
 
@@ -67,15 +70,29 @@ export function SaveHelperInstallPanel({ step, onRecheck, onChooseFolder, busy }
 
   if (step === 'setup') {
     const osLabel = setup?.shortOsLabel ?? 'your computer';
+    const staleHost = Boolean(hostVersion && !hostSupportsFolderPicker(hostVersion));
     return (
       <div className="space-y-3">
-        <StorageNotice tone="success" title="Extension connected">
-          The browser add-on is installed.
-        </StorageNotice>
-        <StorageNotice tone="info" title="Step 2 — Run Save Helper setup" steps={setupInstallSteps(osLabel)}>
+        {staleHost ? (
+          <StorageNotice tone="warning" title="Native host needs an update">
+            Host version {hostVersion} is installed — v0.1.1+ is required for choosing a save folder on
+            this page.
+          </StorageNotice>
+        ) : (
+          <StorageNotice tone="success" title="Extension connected">
+            The browser add-on is installed.
+          </StorageNotice>
+        )}
+        <StorageNotice
+          tone="info"
+          title={staleHost ? 'Step 2 — Update Save Helper setup' : 'Step 2 — Run Save Helper setup'}
+          steps={staleHost ? setupUpdateSteps(osLabel) : setupInstallSteps(osLabel)}
+        >
           {setup
-            ? `One-time setup for ${setup.shortOsLabel} — installs the native host and registers Firefox.`
-            : 'Download and run setup once for your platform.'}
+            ? staleHost
+              ? `Re-run setup for ${setup.shortOsLabel} to refresh the native host.`
+              : `One-time setup for ${setup.shortOsLabel} — installs the native host and registers Firefox.`
+            : 'Download and run setup for your platform.'}
         </StorageNotice>
         <div className="flex flex-wrap items-center gap-2">
           {setup ? (

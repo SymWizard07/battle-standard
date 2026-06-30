@@ -5,6 +5,7 @@
 import {
   detectSaveHelperPlatform,
   getSaveHelperSetupDownload,
+  hostSupportsFolderPicker,
   SAVE_HELPER_RELEASE_TAG,
   SAVE_HELPER_VERSION,
 } from './saveHelperInstall';
@@ -16,26 +17,33 @@ function assertEqual<T>(actual: T, expected: T, message?: string): void {
 }
 
 function testReleaseUrls() {
-  assertEqual(SAVE_HELPER_VERSION, '0.1.0');
-  assertEqual(SAVE_HELPER_RELEASE_TAG, 'save-helper-v0.1.0');
+  assertEqual(SAVE_HELPER_VERSION, '0.1.1');
+  assertEqual(SAVE_HELPER_RELEASE_TAG, 'save-helper-v0.1.1');
 
   const win = getSaveHelperSetupDownload('windows-x64');
   if (!win) throw new Error('expected windows download');
   assertEqual(
     win.url,
-    'https://github.com/SymWizard07/battle-standard/releases/download/save-helper-v0.1.0/Battle-Standard-Save-Helper-Setup-0.1.0-portable-x64.exe',
+    'https://github.com/SymWizard07/battle-standard/releases/download/save-helper-v0.1.1/Battle-Standard-Save-Helper-Setup-0.1.1-portable-x64.exe',
   );
-  assertEqual(win.filename, 'Battle-Standard-Save-Helper-Setup-0.1.0-portable-x64.exe');
+  assertEqual(win.filename, 'Battle-Standard-Save-Helper-Setup-0.1.1-portable-x64.exe');
 
   const mac = getSaveHelperSetupDownload('macos-arm64');
   if (!mac) throw new Error('expected mac download');
-  assertEqual(mac.filename, 'Battle-Standard-Save-Helper-Setup-0.1.0-arm64.dmg');
+  assertEqual(mac.filename, 'Battle-Standard-Save-Helper-Setup-0.1.1-arm64.dmg');
 
   const linux = getSaveHelperSetupDownload('linux-x64');
   if (!linux) throw new Error('expected linux download');
-  assertEqual(linux.filename, 'Battle-Standard-Save-Helper-Setup-0.1.0-x86_64.AppImage');
+  assertEqual(linux.filename, 'Battle-Standard-Save-Helper-Setup-0.1.1-x86_64.AppImage');
 
   assertEqual(getSaveHelperSetupDownload('unknown'), null);
+}
+
+function testHostVersionGate() {
+  assertEqual(hostSupportsFolderPicker('0.1.0'), false);
+  assertEqual(hostSupportsFolderPicker('0.1.1'), true);
+  assertEqual(hostSupportsFolderPicker('0.2.0'), true);
+  assertEqual(hostSupportsFolderPicker(null), false);
 }
 
 function testPlatformDetection() {
@@ -76,5 +84,6 @@ function testPlatformDetection() {
 }
 
 testReleaseUrls();
+testHostVersionGate();
 testPlatformDetection();
 console.log('[automated] saveHelperInstall tests passed');

@@ -32,6 +32,7 @@ import {
   type ActionMessage,
 } from './saveHelperCopy';
 import { chooseCompanionSaveFolder } from '../../lib/companion/companionBridge';
+import { hostSupportsFolderPicker } from './saveHelperInstall';
 
 const btn =
   'min-h-11 rounded-xl px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40';
@@ -55,6 +56,7 @@ function companionReady(status: UnifiedStorageStatus): boolean {
 function installStep(companion: UnifiedStorageStatus['companion']): SaveHelperInstallStep | null {
   if (!companion?.available) return 'extension';
   if (!companion.connected) return 'setup';
+  if (!hostSupportsFolderPicker(companion.hostVersion)) return 'setup';
   if (!companion.saveFolder) return 'folder';
   return null;
 }
@@ -266,6 +268,7 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
         {!companionActive && step && (
           <SaveHelperInstallPanel
             step={step}
+            hostVersion={companion?.hostVersion}
             onRecheck={onRecheckInstall}
             onChooseFolder={() => void onChooseSaveFolder()}
             busy={busy}

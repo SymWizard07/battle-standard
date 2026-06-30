@@ -1,10 +1,14 @@
 # Battle Standard Companion
 
-Optional **Save Helper** for writing campaigns to a real folder on disk — via browser extension + native host + system tray app. Works alongside (or instead of) the browser File System Access save folder.
+Optional **Save Helper** for writing campaigns to a real folder on disk — via browser extension + native host + one-time setup app. Works alongside (or instead of) the browser File System Access save folder.
 
 ## Quick install (production)
 
-**End users:** download the tray app for your platform from [GitHub Releases](https://github.com/SymWizard07/battle-standard/releases) (tag `save-helper-v*`) — Windows (portable or installer, x64/arm64), macOS (`.dmg`), or Linux (`.AppImage` / `.deb`) — and install the [Firefox extension (v0.1.0)](https://addons.mozilla.org/firefox/downloads/file/4873162/c499cfaf782b48d1996b-0.1.0.xpi) from Mozilla Add-ons. Run the tray app, choose a save folder, then open Battle Standard — Firefox native messaging registers automatically.
+**End users:**
+
+1. Install the [Firefox extension (v0.1.0)](https://addons.mozilla.org/firefox/downloads/file/4873162/c499cfaf782b48d1996b-0.1.0.xpi) from Mozilla Add-ons.
+2. Download and run the **Setup** app for your platform from [GitHub Releases](https://github.com/SymWizard07/battle-standard/releases) (tag `save-helper-v*`).
+3. Open Battle Standard → choose a save folder when prompted (opens your OS folder dialog).
 
 **Developers** (from repo):
 
@@ -12,38 +16,21 @@ Optional **Save Helper** for writing campaigns to a real folder on disk — via 
 
    ```bash
    npm run companion:tray:build
-   npm run companion:extension:build
+   npm run companion:extension:build:firefox
    ```
 
-2. **Start tray app** → **Choose save folder…**
+2. **Run setup once** (deploys host + registers Firefox)
 
    ```bash
    npm run companion:tray:start
    ```
 
-3. **Load extension**
-   - **Chrome/Edge:** `chrome://extensions` → Load unpacked → `companion/extension/dist`
-   - **Firefox:** build Firefox variant first, then load from `about:debugging`:
-     ```bash
-     npm run companion:extension:build:firefox
-     ```
-     `about:debugging` → This Firefox → Load Temporary Add-on → pick `companion/extension/dist-firefox/manifest.json`
+3. **Load extension** — signed AMO build, or temporary:
+   `about:debugging` → Load Temporary Add-on → `companion/extension/dist-firefox/manifest.json`
 
-4. **Register native host** (replace `YOUR_EXTENSION_ID` with the 32-char id from step 3):
+4. **Register native host** (if not using setup app) — see [register scripts](#register-scripts) below.
 
-   | OS | Command |
-   |----|---------|
-   | Windows | `.\companion\install\register-windows.ps1 -ExtensionId YOUR_EXTENSION_ID` |
-   | macOS | `bash companion/install/register-macos.sh --extension-id YOUR_EXTENSION_ID` |
-   | Linux | `bash companion/install/register-linux.sh --extension-id YOUR_EXTENSION_ID` |
-   | Firefox (Windows) | `.\companion\install\register-firefox.ps1 -FirefoxId battle-standard-save@dev` |
-   | Firefox (macOS/Linux) | `bash companion/install/register-firefox.sh --firefox-id battle-standard-save@dev` |
-
-   Or use tray menu **Register browser connection…** (copy extension ID to clipboard first).
-
-   **Firefox note:** Release Firefox only allows **signed** add-ons for permanent install. For day-to-day dev, use a **temporary add-on** (`about:debugging` → load `dist-firefox/manifest.json`) and reload it after each browser restart. For a signed build, see [Firefox signing](#firefox-signing) below. **Chrome/Edge** allow unsigned unpacked extensions and are simpler for local dev.
-
-5. **Open website** → Home → Save Helper section should show your folder path.
+5. **Open website** → Home → Save Helper → **Choose save folder…**
 
 ## Firefox signing
 

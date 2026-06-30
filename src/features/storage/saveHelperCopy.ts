@@ -33,9 +33,9 @@ export function companionDisconnectedGuide(error: string | null): {
     return {
       title: 'Save Helper isn’t responding',
       steps: [
-        'Check that the tray app is running',
+        'Check that setup completed successfully',
         'Reload the browser extension',
-        'Refresh this page',
+        'Click “I ran setup — check again” on this page',
       ],
       detail: cleaned || undefined,
     };
@@ -43,9 +43,9 @@ export function companionDisconnectedGuide(error: string | null): {
   return {
     title: 'Save Helper isn’t connected',
     steps: [
-      'Open the tray app and choose a save folder',
+      'Run the Save Helper setup app once for your operating system',
       'Reload the Save Helper extension if you use Firefox',
-      'Refresh this page',
+      'Click “I ran setup — check again” on this page',
     ],
     detail: cleaned || undefined,
   };
@@ -55,22 +55,21 @@ function installSteps(browser: DesktopBrowser): string[] {
   switch (browser) {
     case 'firefox':
       return [
-        'Start the Save Helper tray app and pick a save folder',
-        'In Firefox, open about:debugging → This Firefox',
-        'Load the extension, then refresh this page',
+        'Install the Firefox extension from this page',
+        'Run the one-time Save Helper setup app for your OS',
+        'Choose a save folder here when prompted',
       ];
     case 'chrome':
     case 'edge':
       return [
-        'Start the Save Helper tray app and pick a save folder',
+        'Run the one-time Save Helper setup app',
         'Load the unpacked extension in your browser',
-        'Refresh this page',
+        'Choose a save folder on this page',
       ];
     default:
       return [
-        'Start the Save Helper tray app on your computer',
-        'Install the browser extension for your browser',
-        'Refresh this page when setup is complete',
+        'Install the Save Helper extension and setup app',
+        'Choose a save folder on this page',
       ];
   }
 }

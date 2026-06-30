@@ -132,6 +132,45 @@ export async function getCompanionStatus(): Promise<CompanionStatus> {
   }
 }
 
+const CHOOSE_FOLDER_TIMEOUT_MS = 5 * 60_000;
+
+export async function chooseCompanionSaveFolder(): Promise<CompanionStatus> {
+  try {
+    const response = await postToExtension(
+      { type: 'chooseSaveFolder', requestId: newRequestId() },
+      CHOOSE_FOLDER_TIMEOUT_MS,
+    );
+    if (response.type === 'status') {
+      return {
+        available: true,
+        connected: true,
+        saveFolder: response.saveFolder,
+        hostVersion: response.hostVersion,
+        error: response.error,
+      };
+    }
+    return {
+      available: true,
+      connected: false,
+      saveFolder: null,
+      hostVersion: null,
+      error:
+        response.type === 'error'
+          ? response.error
+          : `Unexpected reply type: ${response.type}`,
+    };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : 'Extension unavailable';
+    return {
+      available: false,
+      connected: false,
+      saveFolder: null,
+      hostVersion: null,
+      error,
+    };
+  }
+}
+
 /** Extension + host connected with save folder configured. */
 export async function isCompanionReady(): Promise<boolean> {
   const status = await getCompanionStatus();

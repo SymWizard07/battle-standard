@@ -11,6 +11,7 @@ import {
 } from './bridge.js';
 
 const HOST_TIMEOUT_MS = 60_000;
+const CHOOSE_FOLDER_TIMEOUT_MS = 5 * 60_000;
 
 function nativeHostError(err: unknown): string {
   const base = err instanceof Error ? err.message : 'Native host unavailable';
@@ -19,11 +20,14 @@ function nativeHostError(err: unknown): string {
 }
 
 /** One-shot native request — more reliable on Firefox background scripts than connectNative. */
-function sendNativeHostMessage(message: ExtensionToHostMessage): Promise<HostToExtensionMessage> {
+function sendNativeHostMessage(
+  message: ExtensionToHostMessage,
+  timeoutMs: number = HOST_TIMEOUT_MS,
+): Promise<HostToExtensionMessage> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error('Native host timeout'));
-    }, HOST_TIMEOUT_MS);
+    }, timeoutMs);
 
     try {
       chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, message, (response) => {
@@ -163,7 +167,9 @@ async function dispatchPageMessage(requestId: string, payload: ReturnType<typeof
 
   try {
     if (payload.mode === 'single') {
-      const response = await sendNativeHostMessage(payload.message);
+      const timeoutMs =
+        payload.message.type === 'chooseSaveFolder' ? CHOOSE_FOLDER_TIMEOUT_MS : HOST_TIMEOUT_MS;
+      const response = await sendNativeHostMessage(payload.message, timeoutMs);
       return wrapExtensionReply(hostResponsesToPageMessage(requestId, [response]));
     }
 

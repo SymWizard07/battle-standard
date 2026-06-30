@@ -32,7 +32,8 @@ export type PageToExtensionMessage =
   | { type: 'deleteCampaign'; requestId: string; campaignId: string }
   | { type: 'loadCampaign'; requestId: string; campaignId: string }
   | { type: 'loadGlobal'; requestId: string }
-  | { type: 'listCampaigns'; requestId: string };
+  | { type: 'listCampaigns'; requestId: string }
+  | { type: 'chooseSaveFolder'; requestId: string };
 
 /** Extension → page */
 export type ExtensionToPageMessage =
@@ -104,7 +105,8 @@ export type ExtensionToHostMessage =
   | { type: 'saveGlobalCommit'; sessionId: string }
   | { type: 'loadCampaignBegin'; sessionId: string; campaignId: string }
   | { type: 'loadGlobalBegin'; sessionId: string }
-  | { type: 'listCampaigns' };
+  | { type: 'listCampaigns' }
+  | { type: 'chooseSaveFolder' };
 
 /** Native host → extension (stdio JSON body) */
 export type HostToExtensionMessage =

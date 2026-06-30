@@ -18,7 +18,7 @@ export function supportsStableStorage(): boolean {
 function folderLinkUnsupportedMessage(browser: DesktopBrowser): string {
   switch (browser) {
     case 'firefox':
-      return 'Firefox cannot link a save folder in the browser. Use Save Helper above (about:debugging → load companion/extension/dist-firefox/manifest.json), or download a backup below.';
+      return 'Firefox cannot link a save folder in the browser. Install Save Helper above, or download a backup below.';
     case 'safari':
       return 'Safari cannot link a save folder for automatic saves in this app. Use Save Helper on desktop, open the site in Chrome or Edge, or download a backup below.';
     case 'edge':

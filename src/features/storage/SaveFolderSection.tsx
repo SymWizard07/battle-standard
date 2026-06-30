@@ -22,15 +22,16 @@ import { ensureWritableAccess } from '../../lib/stableStorage/permissions';
 import { loadRootHandle } from '../../lib/stableStorage/handleStore';
 import { supportsStableStorage } from '../../lib/stableStorage/featureDetect';
 import { InlineActionStatus, StorageNotice } from './StorageNotice';
+import { SaveHelperInstallPanel, type SaveHelperInstallStep } from './SaveHelperInstallPanel';
 import {
   companionDisconnectedGuide,
-  companionNotInstalledGuide,
   formatActionError,
   formatActionInfo,
   formatActionSuccess,
   unsupportedBrowserGuide,
   type ActionMessage,
 } from './saveHelperCopy';
+import { chooseCompanionSaveFolder } from '../../lib/companion/companionBridge';
 
 const btn =
   'min-h-11 rounded-xl px-4 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40';
@@ -49,6 +50,13 @@ function companionReady(status: UnifiedStorageStatus): boolean {
     status.companion.saveFolder != null &&
     status.companion.error == null
   );
+}
+
+function installStep(companion: UnifiedStorageStatus['companion']): SaveHelperInstallStep | null {
+  if (!companion?.available) return 'extension';
+  if (!companion.connected) return 'setup';
+  if (!companion.saveFolder) return 'folder';
+  return null;
 }
 
 export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
@@ -219,9 +227,30 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
     setShowDivergent(false);
   };
 
-  const notInstalled = companionNotInstalledGuide();
   const disconnected = companionDisconnectedGuide(companion?.error ?? null);
   const unsupported = unsupportedBrowserGuide();
+  const step = companion ? installStep(companion) : 'extension';
+
+  const onRecheckInstall = () => {
+    void refreshStatus();
+  };
+
+  const onChooseSaveFolder = async () => {
+    setBusy(true);
+    setMessage(null);
+    const result = await chooseCompanionSaveFolder();
+    if (result.error || !result.saveFolder) {
+      setMessage(
+        formatActionError(result.error ?? 'Folder selection cancelled or unavailable.'),
+      );
+    } else {
+      setMessage(
+        formatActionSuccess(`Save folder set to ${folderBasename(result.saveFolder)}.`),
+      );
+    }
+    await refreshStatus();
+    setBusy(false);
+  };
 
   return (
     <section className="shrink-0 space-y-5">
@@ -234,16 +263,15 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
 
       <div className="space-y-3">
         <h3 className="text-xs font-medium uppercase tracking-wide text-slate-500">Save Helper</h3>
-        {!companion?.available && (
-          <StorageNotice
-            tone="muted"
-            title={notInstalled.title}
-            steps={notInstalled.steps}
-          >
-            {notInstalled.subtitle}
-          </StorageNotice>
+        {!companionActive && step && (
+          <SaveHelperInstallPanel
+            step={step}
+            onRecheck={onRecheckInstall}
+            onChooseFolder={() => void onChooseSaveFolder()}
+            busy={busy}
+          />
         )}
-        {companion?.available && !companion.connected && (
+        {!companionActive && step === 'setup' && companion?.error && (
           <StorageNotice
             tone="warning"
             title={disconnected.title}
@@ -251,17 +279,22 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
             detail={disconnected.detail}
           />
         )}
-        {companion?.available && companion.connected && !companion.saveFolder && (
-          <StorageNotice tone="warning" title="Choose a save folder" steps={['Open the Save Helper tray app', 'Click “Choose save folder”', 'Refresh this page']}>
-            The desktop app is connected — it just needs to know where to save.
-          </StorageNotice>
-        )}
         {companionActive && companion?.saveFolder && (
           <StorageNotice tone="success" title={`Saving to ${folderBasename(companion.saveFolder)}`}>
             <span className="block truncate opacity-80">{companion.saveFolder}</span>
             {companion.hostVersion && (
-              <span className="mt-1 block text-xs opacity-60">Desktop app {companion.hostVersion}</span>
+              <span className="mt-1 block text-xs opacity-60">Host {companion.hostVersion}</span>
             )}
+            <div className="mt-3">
+              <button
+                type="button"
+                className={btnSecondary}
+                disabled={busy}
+                onClick={() => void onChooseSaveFolder()}
+              >
+                Change save folder…
+              </button>
+            </div>
           </StorageNotice>
         )}
       </div>

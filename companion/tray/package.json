@@ -2,7 +2,7 @@
   "name": "@battle-standard/save-tray",
   "private": true,
   "version": "0.1.0",
-  "description": "Battle Standard Save Helper — system tray app",
+  "description": "Battle Standard Save Helper — one-time setup (host install + browser registration)",
   "author": "Battle Standard",
   "homepage": "https://symwizard07.github.io/battle-standard/",
   "repository": {
@@ -25,7 +25,7 @@
   },
   "build": {
     "appId": "com.battlestandard.savehelper",
-    "productName": "Battle Standard Save Helper",
+    "productName": "Battle Standard Save Helper Setup",
     "directories": {
       "output": "release"
     },
@@ -70,10 +70,10 @@
       "signAndEditExecutable": false
     },
     "portable": {
-      "artifactName": "Battle-Standard-Save-Helper-${version}-portable-${arch}.exe"
+      "artifactName": "Battle-Standard-Save-Helper-Setup-${version}-portable-${arch}.exe"
     },
     "nsis": {
-      "artifactName": "Battle-Standard-Save-Helper-${version}-setup-${arch}.exe",
+      "artifactName": "Battle-Standard-Save-Helper-Setup-${version}-installer-${arch}.exe",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
@@ -90,10 +90,10 @@
       "icon": "resources/icon-512.png",
       "category": "public.app-category.utilities",
       "identity": null,
-      "artifactName": "Battle-Standard-Save-Helper-${version}-${arch}.${ext}"
+      "artifactName": "Battle-Standard-Save-Helper-Setup-${version}-${arch}.${ext}"
     },
     "dmg": {
-      "artifactName": "Battle-Standard-Save-Helper-${version}-${arch}.dmg"
+      "artifactName": "Battle-Standard-Save-Helper-Setup-${version}-${arch}.dmg"
     },
     "linux": {
       "target": [
@@ -115,7 +115,7 @@
       "icon": "resources/icon-512.png",
       "category": "Utility",
       "maintainer": "Battle Standard",
-      "artifactName": "Battle-Standard-Save-Helper-${version}-${arch}.${ext}"
+      "artifactName": "Battle-Standard-Save-Helper-Setup-${version}-${arch}.${ext}"
     }
   },
   "devDependencies": {

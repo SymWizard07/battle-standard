@@ -87,33 +87,32 @@ jobs:
           body: |
             ## Battle Standard Save Helper v${{ steps.version.outputs.version }}
 
-            Desktop tray app + native host for saving campaigns outside the browser.
+            One-time setup app + native host for saving campaigns outside the browser.
 
             ### Install
 
-            1. Download the build for your platform below.
-            2. Run the tray app — choose a save folder from the menu.
-            3. Install the [Firefox extension](https://addons.mozilla.org/firefox/downloads/file/4873162/c499cfaf782b48d1996b-0.1.0.xpi) (Mozilla Add-ons, v0.1.0).
-            4. Open Battle Standard and confirm Save Helper shows connected.
+            1. Install the [Firefox extension](https://addons.mozilla.org/firefox/downloads/file/4873162/c499cfaf782b48d1996b-0.1.0.xpi) (Mozilla Add-ons, v0.1.0).
+            2. Download and run the **Setup** build for your platform below (registers the native host).
+            3. Open Battle Standard and choose a save folder when prompted.
 
             ### Downloads
 
-            | Platform | Files |
-            |----------|-------|
-            | **Windows x64** | `*-portable-x64.exe` or `*-setup-x64.exe` (installer) |
-            | **Windows arm64** | `*-portable-arm64.exe` or `*-setup-arm64.exe` (installer) |
-            | **macOS Intel** | `*-x64.dmg` |
-            | **macOS Apple Silicon** | `*-arm64.dmg` |
-            | **Linux x64** | `*-x86_64.AppImage` or `*-amd64.deb` |
-            | **Linux arm64** | `*-arm64.AppImage` or `*-arm64.deb` |
+            | Platform | Setup files |
+            |----------|-------------|
+            | **Windows x64** | `*Setup*-portable-x64.exe` or `*Setup*-installer-x64.exe` |
+            | **Windows arm64** | `*Setup*-portable-arm64.exe` or `*Setup*-installer-arm64.exe` |
+            | **macOS Intel** | `*Setup*-x64.dmg` |
+            | **macOS Apple Silicon** | `*Setup*-arm64.dmg` |
+            | **Linux x64** | `*Setup*-x86_64.AppImage` or `*Setup*-amd64.deb` |
+            | **Linux arm64** | `*Setup*-arm64.AppImage` or `*Setup*-arm64.deb` |
 
-            Firefox native messaging is registered automatically when the tray app starts.
+            Save folder is chosen from the Battle Standard website (system folder dialog).
 
             ### Notes
 
             - Campaigns still save in the browser without Save Helper.
             - macOS builds are unsigned — you may need to allow the app in System Settings → Privacy & Security.
-            - Windows portable builds run directly (add to Startup if desired).
+            - Setup only needs to run once per machine (re-run after major host updates).
           files: |
             artifacts/*.exe
             artifacts/*.dmg

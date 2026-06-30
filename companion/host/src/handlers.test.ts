@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Campaign } from '../../../src/lib/types.js';
 import { encodeSaveCampaignSession } from '../../protocol/session.js';
-import { handleHostMessages } from './handlers.js';
+import { handleHostMessage, handleHostMessages } from './handlers.js';
 import { readCampaignFromDisk } from './diskWriter.js';
 import { resetSessionsForTests } from './sessionState.js';
 
@@ -161,10 +161,25 @@ async function testIncompletePartsRejected() {
   });
 }
 
+async function testChooseSaveFolder() {
+  await withTempSaveRoot(async (saveFolder) => {
+    const picked = path.join(saveFolder, 'picked');
+    await fs.mkdir(picked, { recursive: true });
+    const response = await handleHostMessage(
+      { type: 'chooseSaveFolder' },
+      { folderPicker: () => picked },
+    );
+    assertEqual(response.type, 'status');
+    if (response.type !== 'status') throw new Error('expected status');
+    assertEqual(response.saveFolder, picked);
+  });
+}
+
 async function runTests() {
   await testChunkedSaveCommit();
   await testChunkedLoadStream();
   await testIncompletePartsRejected();
+  await testChooseSaveFolder();
   console.log('[automated] companion/host handler session tests passed');
 }
 

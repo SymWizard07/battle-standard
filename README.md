@@ -13,14 +13,14 @@ Open http://localhost:5173 (or `npm run dev:host` for LAN access).
 
 ## Save Helper (optional)
 
-Save campaigns to a folder on your computer via extension + native host + tray app. See **[companion/README.md](companion/README.md)** for install steps, troubleshooting, and E2E checklist.
+Save campaigns to a folder on your computer via extension + native host + one-time setup. See **[companion/README.md](companion/README.md)** for install steps, troubleshooting, and E2E checklist.
 
-Quick start:
+Quick start (dev):
 
 ```bash
 npm run companion:tray:build
-npm run companion:extension:build
-npm run companion:tray:start
+npm run companion:extension:build:firefox
+npm run companion:tray:start   # one-time setup
 ```
 
 Run all companion tests:

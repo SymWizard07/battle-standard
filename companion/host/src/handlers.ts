@@ -3,7 +3,8 @@ import {
   type ExtensionToHostMessage,
   type HostToExtensionMessage,
 } from '../../protocol/index.js';
-import { HOST_VERSION, loadConfig } from './config.js';
+import { HOST_VERSION, loadConfig, saveConfig } from './config.js';
+import { pickSaveFolder, type FolderPicker } from './folderPicker.js';
 import { deleteCampaignFromDisk, listCampaignIds } from './diskWriter.js';
 import { handleSessionMessage, isSessionMessage } from './sessionState.js';
 
@@ -15,6 +16,7 @@ function asArray(result: HostHandlerResult): HostToExtensionMessage[] {
 
 export async function handleHostMessage(
   message: ExtensionToHostMessage,
+  options: { folderPicker?: FolderPicker } = {},
 ): Promise<HostHandlerResult> {
   const config = loadConfig();
 
@@ -45,6 +47,20 @@ export async function handleHostMessage(
 
       case 'listCampaigns':
         return { type: 'listCampaignsResult', campaignIds: await listCampaignIds(config) };
+
+      case 'chooseSaveFolder': {
+        const picked = pickSaveFolder(options.folderPicker);
+        if (!picked) {
+          return { type: 'error', error: 'Folder selection cancelled or unavailable.' };
+        }
+        await saveConfig({ saveFolder: picked });
+        return {
+          type: 'status',
+          saveFolder: picked,
+          hostVersion: HOST_VERSION,
+          error: null,
+        };
+      }
 
       default:
         return { type: 'error', error: 'Unknown message type' };

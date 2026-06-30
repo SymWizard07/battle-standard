@@ -97,5 +97,5 @@ await build({
   sourcemap: true,
 });
 
-console.log('Tray built — resources/host/main.js + dist/main.cjs');
+console.log('Setup app built — resources/host/main.js + dist/main.cjs');
 console.log('Run: npm run start --prefix companion/tray');

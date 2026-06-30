@@ -1,16 +1,12 @@
 import { app } from 'electron';
-import { startTrayApp } from './trayApp.js';
+import { startSetupApp } from './setupApp.js';
 
-app.setName('Battle Standard Save Helper');
+app.setName('Battle Standard Save Helper Setup');
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.whenReady().then(() => {
-    startTrayApp();
-  });
-
-  app.on('window-all-closed', () => {
-    // Tray-only app — do not quit when no windows are open.
+    startSetupApp();
   });
 }

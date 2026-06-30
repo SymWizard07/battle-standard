@@ -57,6 +57,8 @@ export function pageMessageToHostPlan(
       return { mode: 'load', begin: { type: 'loadGlobalBegin', sessionId: newSessionId() } };
     case 'listCampaigns':
       return { mode: 'single', message: { type: 'listCampaigns' } };
+    case 'chooseSaveFolder':
+      return { mode: 'single', message: { type: 'chooseSaveFolder' } };
     default:
       return null;
   }

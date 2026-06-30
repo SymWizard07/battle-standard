@@ -1,4 +1,5 @@
 export {
+  chooseCompanionSaveFolder,
   deleteCampaignViaCompanion,
   getCompanionStatus,
   importCampaignFromCompanion,

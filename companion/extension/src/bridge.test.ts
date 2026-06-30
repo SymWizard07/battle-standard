@@ -86,10 +86,18 @@ function testHostResponsesToLoadCampaignResult() {
   assertEqual(page.type, 'loadCampaignResult');
 }
 
+function testChooseSaveFolderMapsSingle() {
+  const plan = pageMessageToHostPlan({ type: 'chooseSaveFolder', requestId: 'r4' });
+  assertEqual(plan?.mode, 'single');
+  if (!plan || plan.mode !== 'single') throw new Error('expected single plan');
+  assertEqual(plan.message.type, 'chooseSaveFolder');
+}
+
 async function runTests() {
   testPingMapsSingle();
   testSaveCampaignMapsToSession();
   testLoadCampaignMapsToBegin();
+  testChooseSaveFolderMapsSingle();
   await testRunHostSequence();
   testHostResponsesToLoadCampaignResult();
   console.log('[automated] companion/extension bridge tests passed');

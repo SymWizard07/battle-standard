@@ -91,7 +91,7 @@ jobs:
 
             ### Install
 
-            1. Install the [Firefox extension](https://addons.mozilla.org/firefox/downloads/file/4873162/c499cfaf782b48d1996b-0.1.0.xpi) (Mozilla Add-ons, v0.1.0).
+            1. Install the [Firefox extension](https://addons.mozilla.org/firefox/addon/battle-standard-save-helper/) (Mozilla Add-ons, v0.1.1+ for folder picker).
             2. Download and run the **Setup** build for your platform below (registers the native host).
             3. Open Battle Standard and choose a save folder when prompted.
 

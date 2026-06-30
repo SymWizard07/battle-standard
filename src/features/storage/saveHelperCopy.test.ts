@@ -31,6 +31,9 @@ function testFormatActionError() {
   const msg = formatActionError('Save folder permission required.');
   assertEqual(msg.tone, 'warning');
   assertEqual(msg.title, 'Folder permission needed');
+
+  const stale = formatActionError('Unsupported message type');
+  assertEqual(stale.title, 'Save Helper extension needs an update');
 }
 
 function runTests() {

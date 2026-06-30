@@ -118,6 +118,14 @@ export function unsupportedBrowserGuide(): {
 
 export function formatActionError(raw: string): ActionMessage {
   const text = sanitizeCompanionError(raw);
+  if (text.includes('Unsupported message type') || text.includes('Unknown message type')) {
+    return {
+      tone: 'warning',
+      title: 'Save Helper extension needs an update',
+      detail:
+        'Your browser extension is out of date. Install Save Helper v0.1.1 or later from Mozilla Add-ons, then reload this page.',
+    };
+  }
   if (text.includes('permission')) {
     return {
       tone: 'warning',

@@ -6,7 +6,7 @@ Optional **Save Helper** for writing campaigns to a real folder on disk — via 
 
 **End users:**
 
-1. Install the [Firefox extension (v0.1.0)](https://addons.mozilla.org/firefox/downloads/file/4873162/c499cfaf782b48d1996b-0.1.0.xpi) from Mozilla Add-ons.
+1. Install the [Firefox extension](https://addons.mozilla.org/firefox/addon/battle-standard-save-helper/) from Mozilla Add-ons (v0.1.1+ required for choosing a save folder on the site).
 2. Download and run the **Setup** app for your platform from [GitHub Releases](https://github.com/SymWizard07/battle-standard/releases) (tag `save-helper-v*`).
 3. Open Battle Standard → choose a save folder when prompted (opens your OS folder dialog).
 

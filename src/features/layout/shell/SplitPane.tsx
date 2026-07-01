@@ -8,6 +8,8 @@ import {
   persistableSplitSizesFromLayout,
 } from '../layoutPanelChrome';
 import { buildDefaultSplitLayout, splitPanelGroupKey } from '../layoutTreeUtils';
+import { ModulePanelProvider, sharedEdgesInSplit } from '../ModulePanelContext';
+import { useSnappingSplitHandlers } from '../useSnappingSplitHandlers';
 import { LayoutNodeRenderer } from './LayoutNodeRenderer';
 import { PanelCollapseHandle } from './PanelCollapseHandle';
 import { usePanelCollapsed } from './usePanelCollapsed';
@@ -39,6 +41,7 @@ export function SplitPane({
 }: Props) {
   const layoutMountKey = useLayoutStore((s) => s.layoutMountKey);
   const groupRef = useGroupRef();
+  const groupElementRef = useRef<HTMLDivElement>(null);
   const syncedGroupKeyRef = useRef<string | null>(null);
   const [collapsedByPanelId, setCollapsedByPanelId] = useState<Record<string, boolean>>({});
   const reportPanelCollapsed = useCallback((panelId: string, collapsed: boolean) => {
@@ -49,15 +52,42 @@ export function SplitPane({
   }, []);
   const orientation = node.direction === 'row' ? 'horizontal' : 'vertical';
   const groupKey = `${splitPanelGroupKey(node)}:${layoutMountKey}`;
-  // Stored (expanded) sizes only — never pass startCollapsedPanels here or the Group
-  // resets collapsible panels to 0% whenever the tree updates after resize/expand.
   const defaultLayout = useMemo(
-    () =>
-      buildDefaultSplitLayout(node.children, node.sizes, {
-        startCollapsedPanels: false,
-      }),
-    [groupKey],
+    () => buildDefaultSplitLayout(node.children, node.sizes),
+    [groupKey, node.children, node.sizes],
   );
+  const collapsedByPanelIdRef = useRef(collapsedByPanelId);
+  collapsedByPanelIdRef.current = collapsedByPanelId;
+
+  const childIds = useMemo(() => node.children.map((child) => child.id), [node.children]);
+
+  const commitLayout = useCallback(
+    (layout: Record<string, number>) => {
+      if (!onSplitResize) return;
+      if (Object.values(collapsedByPanelIdRef.current).some(Boolean)) return;
+      const sizes = persistableSplitSizesFromLayout(node.children, layout, node.sizes);
+      if (sizes == null) return;
+      const unchanged =
+        sizes.length === node.sizes.length &&
+        sizes.every((s, i) => Math.abs(s - (node.sizes[i] ?? 0)) < 0.05);
+      if (unchanged) return;
+      onSplitResize(path, sizes);
+    },
+    [node.children, node.sizes, onSplitResize, path],
+  );
+
+  const { onLayoutChange, onLayoutChanged, syncPrevLayout } = useSnappingSplitHandlers({
+    enabled: Boolean(onSplitResize),
+    orientation,
+    childIds,
+    groupRef,
+    groupElementRef,
+    onCommit: commitLayout,
+  });
+
+  useLayoutEffect(() => {
+    syncPrevLayout(defaultLayout);
+  }, [defaultLayout, syncPrevLayout]);
 
   if (node.children.length === 1) {
     const child = node.children[0]!;
@@ -79,19 +109,10 @@ export function SplitPane({
     );
   }
 
-  const handleLayoutChanged = (layout: Record<string, number>) => {
-    if (!onSplitResize) return;
-    const sizes = persistableSplitSizesFromLayout(node.children, layout, node.sizes);
-    if (sizes == null) return;
-    const unchanged =
-      sizes.length === node.sizes.length &&
-      sizes.every((s, i) => Math.abs(s - (node.sizes[i] ?? 0)) < 0.05);
-    if (unchanged) return;
-    onSplitResize(path, sizes);
-  };
+  const handleLayoutChanged = onLayoutChanged;
 
   const restorePanelLayout = useCallback(
-    (panelId: string, expandToPercent: number) => {
+    (panelId: string) => {
       const group = groupRef.current;
       if (!group) return;
       try {
@@ -99,14 +120,14 @@ export function SplitPane({
           node.children,
           group.getLayout(),
           panelId,
-          expandToPercent,
+          node.sizes,
         );
         group.setLayout(next);
       } catch {
         /* group unmounting */
       }
     },
-    [groupRef, node.children],
+    [groupRef, node.children, node.sizes],
   );
 
   const groupId = path.length === 0 ? node.id : `${path.join('.')}:${node.id}`;
@@ -140,9 +161,11 @@ export function SplitPane({
     <Group
       key={groupKey}
       groupRef={groupRef}
+      elementRef={groupElementRef}
       id={groupId}
       orientation={orientation}
       defaultLayout={defaultLayout}
+      onLayoutChange={onSplitResize ? onLayoutChange : undefined}
       onLayoutChanged={onSplitResize ? handleLayoutChanged : undefined}
       className="flex h-full min-h-0 min-w-0 flex-1 overflow-visible"
       disabled={mode === 'preview' && !editable}
@@ -172,6 +195,7 @@ export function SplitPane({
             childPath={childPath}
             index={i}
             count={node.children.length}
+            splitDirection={node.direction}
             mode={mode}
             device={device}
             onSplitResize={onSplitResize}
@@ -184,12 +208,7 @@ export function SplitPane({
             storedSizePercent={node.sizes[i] ?? 100 / node.children.length}
             separatorDisabled={separatorDisabled}
             onCollapsedChange={reportPanelCollapsed}
-            onRestoreExpandedLayout={() =>
-              restorePanelLayout(
-                child.id,
-                node.sizes[i] ?? 100 / node.children.length,
-              )
-            }
+            onRestoreExpandedLayout={() => restorePanelLayout(child.id)}
           />
         );
       })}
@@ -202,6 +221,7 @@ type ChildProps = {
   childPath: number[];
   index: number;
   count: number;
+  splitDirection: 'row' | 'col';
   mode: 'live' | 'preview';
   device: import('../schema/layoutSchema').DeviceClass;
   onSplitResize?: (path: number[], sizes: number[]) => void;
@@ -222,6 +242,7 @@ function SplitChild({
   childPath,
   index,
   count,
+  splitDirection,
   mode,
   device,
   onSplitResize,
@@ -283,18 +304,20 @@ function SplitChild({
           }
         >
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <LayoutNodeRenderer
-              node={child}
-              path={childPath}
-              mode={mode}
-              device={device}
-              onSplitResize={onSplitResize}
-              onTabSelect={onTabSelect}
-              onTabMove={onTabMove}
-              editable={editable}
-              dropHighlightPath={dropHighlightPath}
-              onDropTarget={onDropTarget}
-            />
+            <ModulePanelProvider edges={sharedEdgesInSplit(splitDirection, index, count)}>
+              <LayoutNodeRenderer
+                node={child}
+                path={childPath}
+                mode={mode}
+                device={device}
+                onSplitResize={onSplitResize}
+                onTabSelect={onTabSelect}
+                onTabMove={onTabMove}
+                editable={editable}
+                dropHighlightPath={dropHighlightPath}
+                onDropTarget={onDropTarget}
+              />
+            </ModulePanelProvider>
           </div>
           {hasCollapseControl && collapseDirection && (
             <div className="pointer-events-none absolute inset-0 overflow-visible">

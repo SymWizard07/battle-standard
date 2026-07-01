@@ -7,7 +7,6 @@ import {
   loadCampaign,
   loadCampaignAssets,
   loadTokenLibraryLayout,
-  type DiskImportMode,
   type StoredAsset,
 } from '../db';
 import { GLOBAL_CAMPAIGN_ID } from '../types';
@@ -145,16 +144,13 @@ export async function importGlobalFromDisk(root: FileSystemDirectoryHandle): Pro
 export async function importCampaignFromDisk(
   root: FileSystemDirectoryHandle,
   campaignId: string,
-  mode: DiskImportMode = 'merge',
 ): Promise<boolean> {
   const bundle = await readCampaignFromDisk(root, campaignId);
   if (!bundle) return false;
-  return importCampaignBundleFromDisk(bundle.campaign, bundle.assets, mode);
+  return importCampaignBundleFromDisk(bundle.campaign, bundle.assets);
 }
 
-export async function syncFromDisk(
-  mode: DiskImportMode = 'merge',
-): Promise<{ imported: number; error?: string }> {
+export async function syncFromDisk(): Promise<{ imported: number; error?: string }> {
   const root = await loadRootHandle();
   if (!root) return { imported: 0 };
 
@@ -173,7 +169,7 @@ export async function syncFromDisk(
       const campaignDir = await campaignsDir.getDirectoryHandle(folderName);
       const campaign = await readJson<Campaign>(campaignDir, CAMPAIGN_JSON);
       if (!campaign) continue;
-      const ok = await importCampaignFromDisk(root, campaign.id, mode);
+      const ok = await importCampaignFromDisk(root, campaign.id);
       if (ok) imported += 1;
     }
     return { imported };
@@ -183,15 +179,12 @@ export async function syncFromDisk(
   }
 }
 
-export async function syncCampaignFromDisk(
-  campaignId: string,
-  mode: DiskImportMode = 'merge',
-): Promise<boolean> {
+export async function syncCampaignFromDisk(campaignId: string): Promise<boolean> {
   const root = await loadRootHandle();
   if (!root) return false;
   const allowed = await ensureWritableAccess(root);
   if (!allowed) return false;
-  return importCampaignFromDisk(root, campaignId, mode);
+  return importCampaignFromDisk(root, campaignId);
 }
 
 export async function syncGlobalFromDisk(): Promise<boolean> {

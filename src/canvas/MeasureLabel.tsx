@@ -1,5 +1,23 @@
 import type Konva from 'konva';
+import type { Stage } from 'konva/lib/Stage';
 import { Group, Line, Rect, Text } from 'react-konva';
+import type { Point } from '../lib/types';
+
+export const MEASURE_LABEL_DISMISS_HIT_NAME = 'measure-label-dismiss';
+
+export function isDismissibleMeasureLabelHit(
+  stage: Stage | null,
+  pointer: Point,
+): boolean {
+  if (!stage) return false;
+  const hit = stage.getIntersection(pointer);
+  let node: Konva.Node | null = hit;
+  while (node) {
+    if (node.name() === MEASURE_LABEL_DISMISS_HIT_NAME) return true;
+    node = node.getParent();
+  }
+  return false;
+}
 
 /** Target on-screen size in CSS pixels (constant regardless of map zoom). */
 const FONT_SCREEN_PX = 13;
@@ -50,11 +68,20 @@ export function MeasureLabel({
 
   return (
     <Group
+      name={dismissible ? MEASURE_LABEL_DISMISS_HIT_NAME : undefined}
       x={x - width / 2}
       y={y - height / 2}
       listening={dismissible}
       onMouseEnter={() => dismissible && onHoverChange?.(true)}
       onMouseLeave={() => dismissible && onHoverChange?.(false)}
+      onMouseDown={(e) => {
+        if (!dismissible) return;
+        stopBubble(e);
+      }}
+      onTouchStart={(e) => {
+        if (!dismissible) return;
+        stopBubble(e);
+      }}
       onClick={(e) => {
         if (!dismissible) return;
         stopBubble(e);

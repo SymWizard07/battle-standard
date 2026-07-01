@@ -105,7 +105,7 @@ export const INFO_SECTIONS: InfoSection[] = [
     icon: DrawInfoIcon,
     body: [
       'Draw freehand strokes, lines, shapes, and cones on the map. Pick a color with the swatch.',
-      'Use + and − above the outline slider (or the + / − keys) to change stroke width.',
+      'Drag the outline slider left for thinner strokes or right for thicker; the default width is at the center. You can also use + / − keys while drawing.',
       'Erase removes drawn strokes under the brush. In Select, enable Select drawn shapes to move or delete them.',
     ],
   },

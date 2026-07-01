@@ -144,27 +144,10 @@ export function ensureBuiltinGroups(layout: TokenLibraryLayout): TokenLibraryLay
       order: 1,
     });
   }
-  return { ...layout, groups: migrateBuiltinGroupNames(groups) };
+  return { ...layout, groups };
 }
 
-const LEGACY_BUILTIN_GROUP_NAMES: Record<string, string> = {
-  [IMPORT_GROUP_ID]: 'Imported',
-  [TEMPLATES_GROUP_ID]: 'Templates',
-  [DEFAULT_USER_GROUP_ID]: 'Tokens',
-};
-
-function migrateBuiltinGroupNames(groups: TokenLibraryGroup[]): TokenLibraryGroup[] {
-  return groups.map((g) => {
-    const canonical = BUILTIN_GROUP_NAMES[g.id];
-    const legacy = LEGACY_BUILTIN_GROUP_NAMES[g.id];
-    if (canonical && legacy && g.name === legacy) {
-      return { ...g, name: canonical };
-    }
-    return g;
-  });
-}
-
-export function migrateTokenLibraryLayout(
+export function syncTokenLibraryLayout(
   layout: TokenLibraryLayout | undefined,
   existingAssetIds: string[],
 ): TokenLibraryLayout {

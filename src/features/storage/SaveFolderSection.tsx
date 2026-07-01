@@ -107,7 +107,7 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
   const onSyncFromFolder = async () => {
     setBusy(true);
     setFolderActionStatus(null);
-    const sync = await preferSyncFromDisk({ mode: 'authoritative' });
+    const sync = await preferSyncFromDisk();
     if (sync.error) {
       setFolderActionStatus(formatActionError(sync.error));
     } else {
@@ -147,7 +147,7 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
       setShowDivergent(false);
     }
 
-    const sync = await preferSyncFromDisk({ mode: 'authoritative' });
+    const sync = await preferSyncFromDisk();
     if (sync.error) {
       setMessage(formatActionError(sync.error));
     } else if (sync.imported > 0) {
@@ -174,7 +174,7 @@ export function SaveFolderSection({ onStorageChange, campaignCount }: Props) {
     }
     const ok = await ensureWritableAccess(handle);
     if (ok) {
-      const sync = await preferSyncFromDisk({ mode: 'authoritative' });
+      const sync = await preferSyncFromDisk();
       if (sync.error) setMessage(formatActionError(sync.error));
       else setMessage(formatActionSuccess('Folder access restored.'));
       onStorageChange?.();

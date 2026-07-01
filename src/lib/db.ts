@@ -113,26 +113,10 @@ export async function importCampaignBundle(
   });
 }
 
-export type DiskImportMode = 'merge' | 'authoritative';
-
-/** When mode is merge, keep local IndexedDB data if it is newer than disk. */
-export function shouldImportCampaignFromDisk(
-  local: Campaign | undefined,
-  disk: Campaign,
-  mode: DiskImportMode,
-): boolean {
-  if (mode === 'authoritative') return true;
-  if (!local) return true;
-  return disk.updatedAt > local.updatedAt;
-}
-
 export async function importCampaignBundleFromDisk(
   campaign: Campaign,
   assets: StoredAsset[],
-  mode: DiskImportMode = 'merge',
 ): Promise<boolean> {
-  const local = await loadCampaign(campaign.id);
-  if (!shouldImportCampaignFromDisk(local, campaign, mode)) return false;
   await importCampaignBundle(campaign, assets);
   return true;
 }

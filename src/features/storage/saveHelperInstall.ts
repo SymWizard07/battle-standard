@@ -130,9 +130,6 @@ export function getSaveHelperSetupDownload(
   };
 }
 
-/** @deprecated Use getSaveHelperSetupDownload */
-export const getSaveHelperDownload = getSaveHelperSetupDownload;
-
 export function firefoxExtensionInstallSteps(): string[] {
   return [
     'Click Install extension below — Firefox will ask to confirm.',

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useMemo, useRef } from 'react';
-import type { MeasureKind, MeasureDisplayStyle, DrawToolShape } from '../../lib/types';
+import type { DrawToolShape, MeasureKind } from '../../lib/types';
 import { newId } from '../../lib/ids';
 import { saveAsset } from '../../lib/db';
 import { scheduleStableMirror } from '../../lib/stableStorage';
@@ -13,10 +13,7 @@ import { confirmAction } from '../confirm/confirmDialogStore';
 import { SessionPanelContent } from '../session/SessionPanelContent';
 import { useActiveScene, seesAsPlayer, useStore } from '../../store/useStore';
 import { DEFAULT_GRID_OFFSET } from '../../lib/fixedGrid';
-import {
-  DRAW_STROKE_WIDTH_MAX,
-  DRAW_STROKE_WIDTH_MIN,
-} from '../../lib/drawConstants';
+import { DrawOutlineSlider } from './DrawOutlineSlider';
 import { referenceMapLayer } from '../../lib/sceneMaps';
 import { MapOptionIcon } from './MapOptionIcon';
 import {
@@ -35,14 +32,14 @@ import {
 import { DrawHuePicker } from './DrawHuePicker';
 import { measurementsOwnedBySessionUser } from '../../lib/measureOwnership';
 import {
-  toolBarBtn,
-  toolBarBtnActive,
-  toolBarBtnIcon,
-  toolBarControl,
-  toolBarRow,
-  toolBarSection,
-  toolBarSectionLabel,
-} from './toolBarStyles';
+  ToolOptionButton,
+  ToolOptionGroup,
+  ToolOptionPanelRow,
+  ToolOptionSegmentedControl,
+  ToolOptionShortcutBadge,
+  ToolOptionStandalone,
+  ToolOptionToggle,
+} from './ToolOptionLayout';
 
 interface ShapeOption {
   id: string;
@@ -51,62 +48,36 @@ interface ShapeOption {
   digit: number;
 }
 
-function MeasureDisplayStyleToggle({
-  style,
-  onToggle,
-}: {
-  style: MeasureDisplayStyle;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={`${toolBarControl} rounded-lg px-3 text-xs font-bold uppercase tracking-tight ${
-        style === '5e'
-          ? 'bg-amber-700 text-white'
-          : 'bg-slate-700 text-slate-200'
-      }`}
-      title={
-        style === 'vtt'
-          ? 'VTT — smooth shapes. Switch to 5e grid highlighting.'
-          : '5e — highlight affected grid cells. Switch to VTT smooth shapes.'
-      }
-      aria-label={`Measure display: ${style === 'vtt' ? 'VTT' : '5e grid'}. Click to toggle.`}
-    >
-      {style === 'vtt' ? 'VTT' : '5e'}
-    </button>
-  );
-}
-
-function ShapePickerButton({
+function ShapeOptionButton({
   shape,
   selected,
   onSelect,
-  activeClass,
-  idleClass,
   icon,
+  showShortcut = false,
 }: {
   shape: ShapeOption;
   selected: boolean;
   onSelect: () => void;
-  activeClass: string;
-  idleClass: string;
   icon: ReactNode;
+  showShortcut?: boolean;
 }) {
   return (
-    <button
-      type="button"
+    <ToolOptionToggle
+      label={shape.label}
+      active={selected}
       onClick={onSelect}
-      className={`${toolBarBtnIcon} ${
-        selected ? activeClass : idleClass
-      }`}
       title={`${shape.label} (${shape.digit})`}
-      aria-label={`${shape.label}, shortcut ${shape.digit}`}
+      tone="amber"
     >
-      {icon}
-      {shape.label}
-    </button>
+      {showShortcut ? (
+        <span className="flex flex-col items-center gap-0.5">
+          <ToolOptionShortcutBadge label={shape.digit} />
+          {icon}
+        </span>
+      ) : (
+        icon
+      )}
+    </ToolOptionToggle>
   );
 }
 
@@ -176,11 +147,27 @@ const DRAW_SHAPES = DRAW_SHAPE_ORDER.map((id, i) => ({
   digit: i + 1,
 }));
 
-const btn = toolBarBtn;
-const btnActive = toolBarBtnActive;
-const btnIcon = toolBarBtnIcon;
-const section = toolBarSection;
-const sectionLabel = toolBarSectionLabel;
+function HiddenMapUploadInput({
+  fileRef,
+  onUpload,
+}: {
+  fileRef: React.RefObject<HTMLInputElement | null>;
+  onUpload: (file: File) => void;
+}) {
+  return (
+    <input
+      ref={fileRef}
+      type="file"
+      accept="image/*"
+      className="hidden"
+      onChange={(e) => {
+        const f = e.target.files?.[0];
+        if (f) onUpload(f);
+        e.target.value = '';
+      }}
+    />
+  );
+}
 
 export function ToolOptionsPanel() {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -222,12 +209,12 @@ export function ToolOptionsPanel() {
   const alternatingDiagonals = useStore((s) => s.alternatingDiagonals);
   const setAlternatingDiagonals = useStore((s) => s.setAlternatingDiagonals);
   const measureDisplayStyle = useStore((s) => s.measureDisplayStyle);
+  const setMeasureDisplayStyle = useStore((s) => s.setMeasureDisplayStyle);
   const measureDebugDualView = useStore((s) => s.measureDebugDualView);
   const setMeasureDebugDualView = useStore((s) => s.setMeasureDebugDualView);
   const fadeAndRemoveMeasurementsForCurrentUser = useStore(
     (s) => s.fadeAndRemoveMeasurementsForCurrentUser,
   );
-  const toggleMeasureDisplayStyle = useStore((s) => s.toggleMeasureDisplayStyle);
   const selectDrawShapes = useStore((s) => s.selectDrawShapes);
   const setSelectDrawShapes = useStore((s) => s.setSelectDrawShapes);
   const selectedTokenIds = useStore((s) => s.selectedTokenIds);
@@ -281,7 +268,11 @@ export function ToolOptionsPanel() {
   if (!scene || !activeSceneId) return null;
 
   if (activeTool === 'players') {
-    return <SessionPanelContent />;
+    return (
+      <div className="flex h-full w-full min-w-0 items-stretch px-1">
+        <SessionPanelContent />
+      </div>
+    );
   }
 
   if (activeTool === 'pan') {
@@ -295,42 +286,35 @@ export function ToolOptionsPanel() {
       selectedMeasurementId != null;
 
     return (
-      <div className={`${toolBarRow} gap-3`}>
-        <label
-          className={`${toolBarBtnIcon} cursor-pointer bg-slate-800 text-slate-200`}
-          title="Click or marquee-select lines and shapes drawn on the map"
-        >
-          <input
-            type="checkbox"
-            checked={selectDrawShapes}
-            onChange={(e) => setSelectDrawShapes(e.target.checked)}
+      <ToolOptionPanelRow>
+        <ToolOptionStandalone>
+          <ToolOptionToggle
+            label="Select Drawn Shapes"
+            active={selectDrawShapes}
+            onClick={() => setSelectDrawShapes(!selectDrawShapes)}
+            title="Click or marquee-select lines and shapes drawn on the map"
           />
-          Select drawn shapes
-        </label>
-        <button
-          type="button"
-          className={`${toolBarBtnIcon} bg-slate-800 text-slate-200 enabled:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40`}
-          disabled={!canActOnSelection}
-          onClick={() => {
-            if (activeSceneId) duplicateSelection(activeSceneId);
-          }}
-          title="Duplicate selection (Shift+D)"
-        >
-          Duplicate
-        </button>
-        <button
-          type="button"
-          className={`${toolBarBtnIcon} bg-red-950/80 text-red-100 enabled:hover:bg-red-900/80 disabled:cursor-not-allowed disabled:opacity-40`}
-          disabled={!canActOnSelection}
-          onClick={() => {
-            if (activeSceneId) deleteSelection(activeSceneId);
-          }}
-          title="Delete selection"
-        >
-          Delete
-        </button>
-        <span className="hidden text-xs text-slate-500 lg:inline">Shift+D duplicate</span>
-      </div>
+        </ToolOptionStandalone>
+        <ToolOptionGroup title="Controls">
+          <ToolOptionButton
+            label="Copy"
+            disabled={!canActOnSelection}
+            onClick={() => {
+              if (activeSceneId) duplicateSelection(activeSceneId);
+            }}
+            title="Duplicate selection (Shift+D)"
+          />
+          <ToolOptionButton
+            label="Delete"
+            disabled={!canActOnSelection}
+            onClick={() => {
+              if (activeSceneId) deleteSelection(activeSceneId);
+            }}
+            title="Delete selection"
+            className="border-red-900/60 text-red-200 hover:border-red-800 hover:bg-red-900/50"
+          />
+        </ToolOptionGroup>
+      </ToolOptionPanelRow>
     );
   }
 
@@ -358,60 +342,42 @@ export function ToolOptionsPanel() {
     };
 
     return (
-      <div className={toolBarRow}>
-        <div className={section}>
-          <span className={sectionLabel}>Grid</span>
-          <button
-            type="button"
-            className={`${btnIcon} ${sceneEditMode === 'grid' ? btnActive : btn}`}
+      <ToolOptionPanelRow>
+        <ToolOptionGroup title="Grid">
+          <ToolOptionToggle
+            label="Grid"
+            active={sceneEditMode === 'grid'}
             onClick={() => setSceneEditMode('grid')}
+            title="Edit grid"
           >
             <img src={`${base}icons/toolbar/grid.png`} alt="" className="h-5 w-5 object-contain" />
-            Edit
-          </button>
-          <button type="button" className={btn} onClick={() => setGridVisible(!gridVisible)}>
-            {gridVisible ? 'Hide grid' : 'Show grid'}
-          </button>
-          <button
-            type="button"
-            className={`${btn} disabled:cursor-not-allowed disabled:opacity-40`}
-            disabled={!selectedMap}
-            title={selectedMap ? undefined : 'Select or upload a map first'}
-            onClick={() => void handleAutoSize()}
-          >
-            Auto size
-          </button>
-        </div>
-
-        <div className={section}>
-          <span className={sectionLabel}>Map</span>
-          <button
-            type="button"
-            className={`${btnIcon} ${sceneEditMode === 'map' ? btnActive : btn}`}
+          </ToolOptionToggle>
+          <ToolOptionToggle
+            label={gridVisible ? 'Hide' : 'Show'}
+            active={gridVisible}
+            onClick={() => setGridVisible(!gridVisible)}
+            title={gridVisible ? 'Hide grid' : 'Show grid'}
+          />
+        </ToolOptionGroup>
+        <ToolOptionGroup title="Map">
+          <ToolOptionToggle
+            label="Map"
+            active={sceneEditMode === 'map'}
             onClick={() => setSceneEditMode('map')}
+            title="Edit map"
           >
             <MapOptionIcon />
-            Edit
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void handleUpload(f);
-              e.target.value = '';
-            }}
-          />
-          <button type="button" className={btn} onClick={() => fileRef.current?.click()}>
-            Upload map
-          </button>
-          <button
-            type="button"
-            className={`${btn} disabled:cursor-not-allowed disabled:opacity-40`}
+          </ToolOptionToggle>
+          <ToolOptionButton label="Upload" onClick={() => fileRef.current?.click()} />
+          <ToolOptionButton
+            label="Size to Grid"
             disabled={!selectedMap}
-            title={selectedMap ? undefined : 'Select or upload a map first'}
+            onClick={() => void handleAutoSize()}
+            title={selectedMap ? 'Auto-size map to grid' : 'Select or upload a map first'}
+          />
+          <ToolOptionButton
+            label="Align to Grid Corner"
+            disabled={!selectedMap}
             onClick={() => {
               if (!selectedMap || !activeSceneId) return;
               updateMapLayerTransform(
@@ -421,234 +387,236 @@ export function ToolOptionsPanel() {
                 { recenter: true },
               );
             }}
-          >
-            Align to grid
-          </button>
-          <span className="hidden text-xs text-slate-500 lg:inline">
-            Drag to move · corner handles to scale
-          </span>
-        </div>
-      </div>
+            title={selectedMap ? 'Align map to grid corner' : 'Select or upload a map first'}
+          />
+        </ToolOptionGroup>
+        <HiddenMapUploadInput fileRef={fileRef} onUpload={(f) => void handleUpload(f)} />
+      </ToolOptionPanelRow>
     );
   }
 
   if (activeTool === 'gridEdit' && !asPlayer) {
     return (
-      <div className={toolBarRow}>
-        <button type="button" className={btn} onClick={() => setGridVisible(!gridVisible)}>
-          {gridVisible ? 'Hide grid' : 'Show grid'}
-        </button>
-      </div>
+      <ToolOptionPanelRow>
+        <ToolOptionGroup title="Grid">
+          <ToolOptionToggle
+            label={gridVisible ? 'Hide' : 'Show'}
+            active={gridVisible}
+            onClick={() => setGridVisible(!gridVisible)}
+            title={gridVisible ? 'Hide grid' : 'Show grid'}
+          />
+        </ToolOptionGroup>
+      </ToolOptionPanelRow>
     );
   }
 
   if (activeTool === 'mapEdit' && !asPlayer) {
     return (
-      <div className={toolBarRow}>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void handleUpload(f);
-            e.target.value = '';
-          }}
-        />
-        <button type="button" className={btn} onClick={() => fileRef.current?.click()}>
-          Upload map
-        </button>
-        <span className="text-xs text-slate-500">Drag to move · corner handles to scale</span>
-      </div>
+      <ToolOptionPanelRow>
+        <ToolOptionGroup title="Map">
+          <ToolOptionButton label="Upload" onClick={() => fileRef.current?.click()} />
+        </ToolOptionGroup>
+        <HiddenMapUploadInput fileRef={fileRef} onUpload={(f) => void handleUpload(f)} />
+      </ToolOptionPanelRow>
     );
   }
 
   if (activeTool === 'fog' && !asPlayer) {
     return (
-      <div className={toolBarRow}>
-        {FOG_SHAPES.map((s) => (
-          <ShapePickerButton
-            key={s.id}
-            shape={s}
-            selected={fogShape === s.id}
-            onSelect={() => setFogShape(s.id)}
-            activeClass="bg-amber-600 text-white"
-            idleClass="bg-slate-800 text-slate-200"
-            icon={
-              <img src={`${base}${s.icon.replace(/^\//, '')}`} alt="" className="h-5 w-5" />
-            }
+      <ToolOptionPanelRow>
+        <ToolOptionGroup title="Shapes">
+          {FOG_SHAPES.map((s) => (
+            <ShapeOptionButton
+              key={s.id}
+              shape={s}
+              selected={fogShape === s.id}
+              onSelect={() => setFogShape(s.id)}
+              icon={
+                <img src={`${base}${s.icon.replace(/^\//, '')}`} alt="" className="h-5 w-5" />
+              }
+            />
+          ))}
+        </ToolOptionGroup>
+        <ToolOptionGroup title="Mode">
+          <ToolOptionSegmentedControl
+            tone="emerald"
+            segments={[
+              {
+                id: 'hide',
+                label: 'Hide',
+                active: fogMode === 'hide',
+                onClick: () => setFogMode('hide'),
+                icon: <FogPlusIcon />,
+              },
+              {
+                id: 'reveal',
+                label: 'Reveal',
+                active: fogMode === 'reveal',
+                onClick: () => setFogMode('reveal'),
+                icon: <FogMinusIcon />,
+              },
+            ]}
           />
-        ))}
-        <button
-          type="button"
-          className={`${btnIcon} ${fogMode === 'hide' ? btnActive : btn}`}
-          onClick={() => setFogMode('hide')}
-        >
-          <FogPlusIcon />
-          Hide
-        </button>
-        <button
-          type="button"
-          className={`${btnIcon} ${fogMode === 'reveal' ? btnActive : btn}`}
-          onClick={() => setFogMode('reveal')}
-        >
-          <FogMinusIcon />
-          Reveal
-        </button>
-        <button
-          type="button"
-          className={`${btnIcon} ${fogOpaquePreview ? btnActive : btn}`}
-          onClick={() => setFogOpaquePreview(!fogOpaquePreview)}
-          title={fogOpaquePreview ? 'Show GM fog transparency' : 'Preview opaque player fog'}
-        >
-          <FogEyeIcon />
-          Preview
-        </button>
-        <button
-          type="button"
-          className={`${btnIcon} ${btn}`}
-          onClick={async () => {
-            const confirmed = await confirmAction({
-              title: 'Clear fog',
-              message: 'Clear all fog from this scene?',
-              confirmLabel: 'Clear fog',
-            });
-            if (!confirmed) return;
-            revealAllFog(activeSceneId);
-          }}
-        >
-          <FogClearIcon />
-          Clear fog
-        </button>
-        <button
-          type="button"
-          className={
-            scene.fog.defaultHidden
-              ? `${btnIcon} bg-amber-700 text-xs text-white`
-              : `${btnIcon} ${btn}`
-          }
-          onClick={async () => {
-            const enabling = !scene.fog.defaultHidden;
-            const message = enabling
-              ? 'Cover every map with fog?'
-              : 'Remove full map fog?';
-            const confirmed = await confirmAction({
-              title: enabling ? 'Enable full fog' : 'Remove full fog',
-              message,
-              confirmLabel: enabling ? 'Cover maps' : 'Remove fog',
-            });
-            if (!confirmed) return;
-            setFogDefaultHidden(activeSceneId, enabling);
-          }}
-        >
-          <FogFullIcon />
-          Full fog
-        </button>
-      </div>
+        </ToolOptionGroup>
+        <ToolOptionStandalone>
+          <ToolOptionToggle
+            label="Preview"
+            active={fogOpaquePreview}
+            onClick={() => setFogOpaquePreview(!fogOpaquePreview)}
+            title="Hold Shift to preview opaque player fog"
+            tone="violet"
+          >
+            <span className="flex flex-col items-center gap-0.5">
+              <ToolOptionShortcutBadge label="Shift" />
+              <FogEyeIcon />
+            </span>
+          </ToolOptionToggle>
+        </ToolOptionStandalone>
+        <ToolOptionGroup title="Area">
+          <ToolOptionSegmentedControl
+            tone="amber"
+            segments={[
+              {
+                id: 'clear',
+                label: 'Clear',
+                active: false,
+                onClick: async () => {
+                  const confirmed = await confirmAction({
+                    title: 'Clear fog',
+                    message: 'Clear all fog from this scene?',
+                    confirmLabel: 'Clear fog',
+                  });
+                  if (!confirmed) return;
+                  revealAllFog(activeSceneId);
+                },
+                icon: <FogClearIcon />,
+              },
+              {
+                id: 'full',
+                label: 'Full',
+                active: scene.fog.defaultHidden,
+                onClick: async () => {
+                  const enabling = !scene.fog.defaultHidden;
+                  const message = enabling ? 'Cover every map with fog?' : 'Remove full map fog?';
+                  const confirmed = await confirmAction({
+                    title: enabling ? 'Enable full fog' : 'Remove full fog',
+                    message,
+                    confirmLabel: enabling ? 'Cover maps' : 'Remove fog',
+                  });
+                  if (!confirmed) return;
+                  setFogDefaultHidden(activeSceneId, enabling);
+                },
+                icon: <FogFullIcon />,
+              },
+            ]}
+          />
+        </ToolOptionGroup>
+      </ToolOptionPanelRow>
     );
   }
 
   if (activeTool === 'measure') {
+    const displaySegment =
+      measureDebugDualView ? 'both' : measureDisplayStyle === '5e' ? '5e' : 'vtt';
+
     return (
-      <div className={toolBarRow}>
-        {MEASURES.map((m) => (
-          <ShapePickerButton
-            key={m.id}
-            shape={m}
-            selected={measureKind === m.id}
-            onSelect={() => setMeasureKind(m.id)}
-            activeClass="bg-amber-600 text-white"
-            idleClass="bg-slate-800 text-slate-200"
-            icon={
-              <img src={`${base}${m.icon.replace(/^\//, '')}`} alt="" className="h-5 w-5" />
-            }
+      <ToolOptionPanelRow>
+        <ToolOptionGroup title="Shapes">
+          {MEASURES.map((m) => (
+            <ShapeOptionButton
+              key={m.id}
+              shape={m}
+              selected={measureKind === m.id}
+              onSelect={() => setMeasureKind(m.id)}
+              icon={
+                <img src={`${base}${m.icon.replace(/^\//, '')}`} alt="" className="h-5 w-5" />
+              }
+              showShortcut
+            />
+          ))}
+        </ToolOptionGroup>
+        <ToolOptionGroup title="Display">
+          <ToolOptionSegmentedControl
+            tone="sky"
+            segments={[
+              {
+                id: 'vtt',
+                label: 'VTT',
+                active: displaySegment === 'vtt',
+                onClick: () => {
+                  setMeasureDisplayStyle('vtt');
+                  setMeasureDebugDualView(false);
+                },
+                title: 'VTT — smooth shapes',
+              },
+              {
+                id: '5e',
+                label: '5e',
+                active: displaySegment === '5e',
+                onClick: () => {
+                  setMeasureDisplayStyle('5e');
+                  setMeasureDebugDualView(false);
+                },
+                title: '5e — highlight affected grid cells',
+              },
+              {
+                id: 'both',
+                label: 'Both',
+                active: displaySegment === 'both',
+                onClick: () => setMeasureDebugDualView(true),
+                title: 'Show VTT and 5e overlays at the same time',
+              },
+            ]}
           />
-        ))}
-        <MeasureDisplayStyleToggle
-          style={measureDisplayStyle}
-          onToggle={toggleMeasureDisplayStyle}
-        />
-        <label
-          className={`${toolBarBtnIcon} bg-slate-800 text-slate-200`}
-          title="Debug: show VTT (amber) and 5e grid (sky) overlays at the same time"
-        >
-          <input
-            type="checkbox"
-            checked={measureDebugDualView}
-            onChange={(e) => setMeasureDebugDualView(e.target.checked)}
+        </ToolOptionGroup>
+        <ToolOptionGroup title="Pinned">
+          <ToolOptionToggle
+            label="Pin Measurement"
+            active={measurePinMode}
+            onClick={() => setMeasurePinMode(!measurePinMode)}
+            title="Pin measurements to the map (Shift)"
+            tone="emerald"
+          >
+            <ToolOptionShortcutBadge label="Shift" />
+          </ToolOptionToggle>
+          <ToolOptionButton
+            label="Dismiss All Pinned"
+            disabled={ownedMeasurementCount === 0}
+            onClick={() => fadeAndRemoveMeasurementsForCurrentUser(activeSceneId)}
+            title="Fade and remove all measurements you pinned"
           />
-          Both
-        </label>
-        <button
-          type="button"
-          onClick={() => setMeasurePinMode(!measurePinMode)}
-          className={`${toolBarControl} rounded-lg px-3 text-xs ${
-            measurePinMode ? 'bg-emerald-700 text-white' : 'bg-slate-800 text-slate-200'
-          }`}
-        >
-          Pin
-        </button>
-        <button
-          type="button"
-          disabled={ownedMeasurementCount === 0}
-          onClick={() => fadeAndRemoveMeasurementsForCurrentUser(activeSceneId)}
-          className={`${btnIcon} ${ownedMeasurementCount === 0 ? 'cursor-not-allowed opacity-40' : btn}`}
-          title="Fade and remove all measurements you pinned"
-        >
-          Dismiss all
-        </button>
-        <label className={`${toolBarBtnIcon} text-slate-300`}>
-          <input
-            type="checkbox"
-            checked={alternatingDiagonals}
-            onChange={(e) => setAlternatingDiagonals(e.target.checked)}
+        </ToolOptionGroup>
+        <ToolOptionStandalone>
+          <ToolOptionToggle
+            label="Use Alt. Diagonals"
+            active={alternatingDiagonals}
+            onClick={() => setAlternatingDiagonals(!alternatingDiagonals)}
           />
-          Alt. diagonals
-        </label>
-      </div>
+        </ToolOptionStandalone>
+      </ToolOptionPanelRow>
     );
   }
 
   if (activeTool === 'draw') {
-    const erasing = drawShape === 'erase';
     return (
-      <div className={toolBarRow}>
-        {!erasing && <DrawHuePicker hue={drawHue} onChange={setDrawHue} />}
-        {DRAW_SHAPES.map((s) => (
-          <ShapePickerButton
-            key={s.id}
-            shape={s}
-            selected={drawShape === s.id}
-            onSelect={() => setDrawShape(s.id)}
-            activeClass="bg-amber-600 text-white"
-            idleClass="bg-slate-800 text-slate-200"
-            icon={<DrawShapeIcon shape={s.id} />}
-          />
-        ))}
-        <label className={`${toolBarControl} flex min-w-[10rem] items-center gap-2 overflow-hidden rounded-lg bg-slate-800 px-2 text-xs text-slate-200`}>
-          <span className="shrink-0 text-[10px] text-slate-400">Outline</span>
-          <div className="flex min-w-0 flex-1 flex-col justify-center gap-0">
-            <div
-              className="flex justify-between px-0.5 text-[10px] leading-none text-slate-500"
-              aria-hidden
-            >
-              <span>−</span>
-              <span>+</span>
-            </div>
-            <input
-              type="range"
-              min={DRAW_STROKE_WIDTH_MIN}
-              max={DRAW_STROKE_WIDTH_MAX}
-              value={drawStrokeWidth}
-              onChange={(e) => setDrawStrokeWidth(Number(e.target.value))}
-              className="w-full min-w-0"
-              aria-label="Outline width"
+      <ToolOptionPanelRow>
+        <ToolOptionGroup>
+          {DRAW_SHAPES.map((s) => (
+            <ShapeOptionButton
+              key={s.id}
+              shape={s}
+              selected={drawShape === s.id}
+              onSelect={() => setDrawShape(s.id)}
+              icon={<DrawShapeIcon shape={s.id} />}
+              showShortcut
             />
-          </div>
-          <span className="w-4 shrink-0 text-right text-[10px] tabular-nums">{drawStrokeWidth}</span>
-        </label>
-      </div>
+          ))}
+        </ToolOptionGroup>
+        <ToolOptionGroup>
+          <DrawHuePicker hue={drawHue} onChange={setDrawHue} variant="swatch" toolOption />
+          <DrawOutlineSlider value={drawStrokeWidth} onChange={setDrawStrokeWidth} />
+        </ToolOptionGroup>
+      </ToolOptionPanelRow>
     );
   }
 

@@ -101,19 +101,19 @@ function main() {
  
   const invRange = mx > mn ? 1 / (mx - mn) : 1;
  
-  // Map to a subtle, cloudy grayscale with most energy near midtones.
+  // Map to dark slate (#0f172a) with subtle lighter cloud wisps (used as Konva fillPattern).
+  const baseR = 15;
+  const baseG = 23;
+  const baseB = 42;
   for (let i = 0; i < field.length; i++) {
     let t = (field[i]! - mn) * invRange; // [0,1]
-    // Soft thresholding to create cloud "puffs" but keep it subtle.
     t = smoothstep(0.28, 0.82, t);
-    // Compress contrast (subtle)
-    t = 0.25 + t * 0.55;
- 
-    const g = Math.max(0, Math.min(255, Math.round(t * 255)));
+    t = 0.12 + t * 0.88;
+
     const o = i * 4;
-    img.data[o + 0] = g;
-    img.data[o + 1] = g;
-    img.data[o + 2] = g;
+    img.data[o + 0] = Math.max(0, Math.min(255, Math.round(baseR + t * 38)));
+    img.data[o + 1] = Math.max(0, Math.min(255, Math.round(baseG + t * 48)));
+    img.data[o + 2] = Math.max(0, Math.min(255, Math.round(baseB + t * 58)));
     img.data[o + 3] = 255;
   }
  

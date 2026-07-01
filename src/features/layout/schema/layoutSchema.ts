@@ -1,10 +1,10 @@
 export const MODULE_IDS = [
   'scenes',
   'tokens',
+  'settings',
   'toolbar',
   'toolOptions',
   'canvas',
-  'sessionHeader',
   'info',
 ] as const;
 
@@ -27,6 +27,7 @@ export type SplitLayoutNode = {
   direction: 'row' | 'col';
   sizes: number[];
   children: LayoutNode[];
+  collapse?: CollapseDirection;
 };
 
 export type TabsLayoutNode = {
@@ -71,10 +72,10 @@ export type LayoutProfiles = Record<DeviceClass, LayoutNode>;
 export const MODULE_LABELS: Record<ModuleId, string> = {
   scenes: 'Scenes',
   tokens: 'Tokens',
+  settings: 'Settings',
   toolbar: 'Toolbar',
   toolOptions: 'Tool options',
   canvas: 'Play area',
-  sessionHeader: 'Header',
   info: 'Help',
 };
 
@@ -113,6 +114,73 @@ export function countPlayAreas(node: LayoutNode): number {
   return node.children.reduce((n, c) => n + countPlayAreas(c), 0);
 }
 
+export function layoutContainsModule(node: LayoutNode, moduleId: ModuleId): boolean {
+  if (node.type === 'empty') return false;
+  if (node.type === 'module') return node.moduleId === moduleId;
+  if (node.type === 'playArea') return moduleId === 'canvas';
+  if (node.type === 'tabs') {
+    return node.tabs.some((tab) => tab.moduleId === moduleId);
+  }
+  return node.children.some((child) => layoutContainsModule(child, moduleId));
+}
+
+const SETTINGS_PANE: ModuleLayoutNode = {
+  type: 'module',
+  id: 'settings-pane',
+  moduleId: 'settings',
+};
+
+function wrapWithSettingsBelow(
+  node: LayoutNode,
+  scenesSizes: [number, number] = [86, 14],
+): SplitLayoutNode {
+  const collapse =
+    node.type === 'module' || node.type === 'tabs' || node.type === 'split'
+      ? node.collapse
+      : undefined;
+  const inner =
+    node.type === 'module' && node.collapse != null
+      ? ({ type: 'module', id: node.id, moduleId: node.moduleId } satisfies ModuleLayoutNode)
+      : node.type === 'tabs' && node.collapse != null
+        ? { ...node, collapse: undefined }
+        : node.type === 'split' && node.collapse != null
+          ? { ...node, collapse: undefined }
+          : node;
+
+  return {
+    type: 'split',
+    id: `${node.id}-column`,
+    direction: 'col',
+    sizes: [...scenesSizes],
+    ...(collapse != null ? { collapse } : {}),
+    children: [inner, { ...SETTINGS_PANE }],
+  };
+}
+
+/** Inject a settings module below scenes (or scene tabs) when missing from saved layouts. */
+export function ensureSettingsModule(node: LayoutNode): LayoutNode {
+  if (node.type === 'empty' || layoutContainsModule(node, 'settings')) {
+    return node;
+  }
+
+  if (node.type === 'module' && node.moduleId === 'scenes') {
+    return wrapWithSettingsBelow(node);
+  }
+
+  if (node.type === 'tabs' && node.tabs.some((tab) => tab.moduleId === 'scenes')) {
+    return wrapWithSettingsBelow(node, [90, 10]);
+  }
+
+  if (node.type === 'split') {
+    return {
+      ...node,
+      children: node.children.map((child) => ensureSettingsModule(child)),
+    };
+  }
+
+  return node;
+}
+
 export function validateLayout(node: LayoutNode, isRoot = true): string | null {
   if (node.type === 'empty') {
     if (!isRoot) return 'Empty layout node must be at root';
@@ -122,6 +190,9 @@ export function validateLayout(node: LayoutNode, isRoot = true): string | null {
     const playAreas = countPlayAreas(node);
     if (playAreas > 1) {
       return `Layout must contain at most one play area (found ${playAreas})`;
+    }
+    if (!layoutContainsModule(node, 'settings')) {
+      return 'Layout must include a settings module';
     }
   }
   if (node.type === 'split') {
@@ -227,4 +298,12 @@ export function repairLayoutTree(node: LayoutNode): LayoutNode {
     repaired = { ...node };
   }
   return hoistSolePanelLayout(repaired);
+}
+
+export function validateLayoutProfiles(profiles: LayoutProfiles): string | null {
+  for (const device of ['desktop', 'tablet', 'mobile'] as const) {
+    const err = validateLayout(repairLayoutTree(cloneLayout(profiles[device])));
+    if (err) return `${device}: ${err}`;
+  }
+  return null;
 }

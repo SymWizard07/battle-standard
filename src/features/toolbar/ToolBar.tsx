@@ -8,6 +8,7 @@ import {
   TOOLBAR_TOOLS,
   toolForToolbarHotkey,
 } from './toolHotkeys';
+import { ToolOptionShortcutBadge } from './ToolOptionLayout';
 
 const base = import.meta.env.BASE_URL;
 
@@ -251,14 +252,6 @@ export function ToolBar() {
           const isPlayers = t.id === 'players';
           return (
             <div key={t.id} className="relative flex min-w-0 flex-1 flex-col">
-              <span
-                className={`pointer-events-none absolute inset-x-0 bottom-full mb-0.5 text-center text-[10px] font-bold leading-none ${
-                  active ? 'text-sky-300' : 'text-slate-400'
-                }`}
-                aria-hidden
-              >
-                [{t.hotkey}]
-              </span>
               <ToolBarButton
                 label={t.label}
                 hotkey={t.hotkey}
@@ -307,7 +300,13 @@ function ToolBarButton({
       aria-label={`${label} (${hotkey})`}
     >
       <ToolOverlay tool={tool} active={active} hovered={hovered} />
-      <span className="relative z-10 font-medium">{label}</span>
+      <span className="relative z-10 flex flex-col items-center gap-0.5">
+        <ToolOptionShortcutBadge
+          label={hotkey}
+          className={active ? 'text-sky-100' : 'text-slate-400'}
+        />
+        <span className="font-medium">{label}</span>
+      </span>
       {children}
     </button>
   );

@@ -8,7 +8,7 @@ export function CampaignsBackButton({ className = '' }: Props) {
   return (
     <Link
       to="/"
-      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-transparent text-slate-400 transition-colors hover:border-slate-600 hover:bg-slate-800 hover:text-white ${className}`}
+      className={`flex shrink-0 items-center justify-center rounded-xl border border-transparent text-slate-400 transition-colors hover:border-slate-600 hover:bg-slate-800 hover:text-white ${className}`}
       aria-label="Back to campaigns"
       title="Campaigns"
     >

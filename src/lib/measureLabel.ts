@@ -1,5 +1,5 @@
 import { GRID_CELL_FT, GRID_SIZE_PX } from './fixedGrid';
-import { lineLengthFt } from './measure';
+import { lineLengthFt, measureDistanceCells } from './measure';
 import {
   cubeCenterWorld,
   sphereCenterWorld,
@@ -58,15 +58,15 @@ export function getMeasureLabelInfo(
     const r = sphereRadiusWorld(p);
     if (r <= 0) return null;
     const c = sphereCenterWorld(p);
-    const radiusFt = Math.round((r * GRID_CELL_FT) / GRID_SIZE_PX);
+    const radiusFt = measureDistanceCells(r) * GRID_CELL_FT;
     return { text: `${radiusFt} ft`, x: c.x, y: c.y };
   }
 
   if (kind === 'cone') {
     const p = params as ConeMeasureParams;
-    const lengthWorld = p.lengthWorld ?? p.lengthCells * GRID_SIZE_PX;
-    if (lengthWorld <= 0) return null;
-    const lenFt = Math.round((lengthWorld * GRID_CELL_FT) / GRID_SIZE_PX);
+    if (p.lengthCells <= 0) return null;
+    const lengthWorld = p.lengthCells * GRID_SIZE_PX;
+    const lenFt = p.lengthCells * GRID_CELL_FT;
     const t = 0.45;
     return {
       text: `${lenFt} ft`,

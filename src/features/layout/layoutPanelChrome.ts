@@ -1,5 +1,5 @@
 import type { CollapseDirection, LayoutNode } from './schema/layoutSchema';
-import { updateNodeAtPath, type LayoutPath } from './layoutTreeUtils';
+import { getNodeAtPath, updateNodeAtPath, type LayoutPath } from './layoutTreeUtils';
 
 export const LAYOUT_COLLAPSE_DRAG_TYPE = 'application/x-battle-standard-layout-collapse';
 
@@ -43,8 +43,61 @@ export function decodeCollapseDrag(raw: string): CollapseDragPayload | null {
 }
 
 export function getPanelCollapse(node: LayoutNode): CollapseDirection | undefined {
-  if (node.type === 'module' || node.type === 'tabs') return node.collapse;
+  if (node.type === 'module' || node.type === 'tabs' || node.type === 'split') {
+    return node.collapse;
+  }
   return undefined;
+}
+
+/** Collapse assigned to a split group, shown on each direct child panel in preview. */
+export type SplitCollapseLink = {
+  direction: CollapseDirection;
+  fromPath: LayoutPath;
+  linkId: string;
+};
+
+const COLLAPSE_LINK_PALETTE = [
+  { border: 'border-rose-400', bg: 'bg-rose-950/95', text: 'text-rose-200' },
+  { border: 'border-amber-400', bg: 'bg-amber-950/95', text: 'text-amber-200' },
+  { border: 'border-emerald-400', bg: 'bg-emerald-950/95', text: 'text-emerald-200' },
+  { border: 'border-violet-400', bg: 'bg-violet-950/95', text: 'text-violet-200' },
+  { border: 'border-cyan-400', bg: 'bg-cyan-950/95', text: 'text-cyan-200' },
+  { border: 'border-fuchsia-400', bg: 'bg-fuchsia-950/95', text: 'text-fuchsia-200' },
+] as const;
+
+export function collapseLinkClassName(linkId: string): string {
+  let hash = 0;
+  for (let i = 0; i < linkId.length; i++) {
+    hash = (hash * 31 + linkId.charCodeAt(i)) >>> 0;
+  }
+  const entry = COLLAPSE_LINK_PALETTE[hash % COLLAPSE_LINK_PALETTE.length]!;
+  return `${entry.border} ${entry.bg} ${entry.text}`;
+}
+
+/**
+ * When dropping collapse on a module/tab in a simple split column, assign to the split group.
+ */
+export function resolveCollapseAssignmentPath(
+  root: LayoutNode,
+  targetPath: LayoutPath,
+): LayoutPath {
+  const target = getNodeAtPath(root, targetPath);
+  if (!target) return targetPath;
+  if (target.type === 'split') return targetPath;
+  if (target.type !== 'module' && target.type !== 'tabs') return targetPath;
+  if (getPanelCollapse(target) != null) return targetPath;
+  if (targetPath.length === 0) return targetPath;
+
+  const parentPath = targetPath.slice(0, -1);
+  const parent = getNodeAtPath(root, parentPath);
+  if (parent?.type !== 'split') return targetPath;
+
+  const simplePanelGroup = parent.children.every(
+    (child) => child.type === 'module' || child.type === 'tabs',
+  );
+  if (!simplePanelGroup) return targetPath;
+
+  return parentPath;
 }
 
 export function setPanelCollapseAtPath(
@@ -53,7 +106,7 @@ export function setPanelCollapseAtPath(
   collapse: CollapseDirection | undefined,
 ): LayoutNode {
   return updateNodeAtPath(root, path, (node) => {
-    if (node.type === 'module' || node.type === 'tabs') {
+    if (node.type === 'module' || node.type === 'tabs' || node.type === 'split') {
       if (collapse == null) {
         const { collapse: _removed, ...rest } = node;
         return rest as LayoutNode;
@@ -105,51 +158,37 @@ function collapsiblePanelExpandedPercent(
   return livePercent;
 }
 
-function normalizePercentLayout(
-  children: LayoutNode[],
-  percents: number[],
-): Record<string, number> {
-  const total = percents.reduce((a, b) => a + b, 0) || 1;
-  const normalized = percents.map((s) => (s / total) * 100);
-  return Object.fromEntries(children.map((child, i) => [child.id, normalized[i]!]));
-}
-
 /**
- * Expand one collapsible panel to its stored % while leaving other collapsed panels at 0%.
- * Shrinks only siblings that are currently expanded.
+ * Restore expanded panels to stored tree sizes; keep other collapsed panels at 0%.
  */
 export function layoutAfterExpandingOnePanel(
   children: LayoutNode[],
   currentLayout: Record<string, number>,
   expandPanelId: string,
-  expandToPercent: number,
+  storedSizes: number[],
 ): Record<string, number> {
-  const expandTo = Math.max(expandToPercent, COLLAPSED_PANEL_SIZE_THRESHOLD);
-  const expandCurrent = currentLayout[expandPanelId] ?? 0;
-  const needed = expandTo - expandCurrent;
-  if (needed <= 0.05) {
-    return currentLayout;
-  }
-
-  const shrinkable = children.filter(
-    (c) =>
-      c.id !== expandPanelId && !isCollapsedPanelSize(currentLayout[c.id] ?? 0),
-  );
-  const shrinkableTotal = shrinkable.reduce(
-    (sum, c) => sum + (currentLayout[c.id] ?? 0),
-    0,
+  const collapsedIds = new Set(
+    children
+      .filter(
+        (c) =>
+          c.id !== expandPanelId && isCollapsedPanelSize(currentLayout[c.id] ?? 0),
+      )
+      .map((c) => c.id),
   );
 
-  const raw = children.map((child) => {
-    if (child.id === expandPanelId) return expandTo;
-    const cur = currentLayout[child.id] ?? 0;
-    if (isCollapsedPanelSize(cur)) return 0;
-    if (shrinkableTotal <= 0) return cur;
-    const share = cur / shrinkableTotal;
-    return Math.max(0, cur - needed * share);
+  const expandedStoredTotal = children.reduce((sum, child, i) => {
+    if (collapsedIds.has(child.id)) return sum;
+    return sum + (storedSizes[i] ?? 0);
+  }, 0);
+
+  const raw = children.map((child, i) => {
+    if (collapsedIds.has(child.id)) return 0;
+    const stored = storedSizes[i] ?? 0;
+    if (expandedStoredTotal <= 0) return 100 / Math.max(children.length, 1);
+    return (stored / expandedStoredTotal) * 100;
   });
 
-  return normalizePercentLayout(children, raw);
+  return Object.fromEntries(children.map((child, i) => [child.id, raw[i]!]));
 }
 
 /** Whether a group layout change is driven by a collapsible panel at collapsed size. */

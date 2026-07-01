@@ -8,9 +8,10 @@ import { scheduleStableGlobalMirror, scheduleStableMirror } from '../lib/stableS
 import { isTokenLibraryAsset, mapAssetIdsInCampaign } from '../lib/campaignAssets';
 import { newId } from '../lib/ids';
 import { loadImageDimensions } from '../lib/mapAlign';
-import { bringMapLayerToFront as reorderMapLayerToFront, migrateSceneMaps, offsetMapTransform, sceneMaps } from '../lib/sceneMaps';
+import { bringMapLayerToFront as reorderMapLayerToFront, normalizeScene, offsetMapTransform, sceneMaps } from '../lib/sceneMaps';
 import { applyFullMapFog, removeFullMapFog } from '../lib/fullMapFog';
 import { normalizeFogState } from '../lib/fog';
+import { mergeFogWithShape } from '../lib/fogOps';
 import { computeMapsCentroid, recenterSceneGrid } from '../lib/gridRecenter';
 import { DEFAULT_GRID_OFFSET, setGridOffset } from '../lib/fixedGrid';
 import { quantizeGridSnapStrength } from '../lib/gridSnap';
@@ -18,7 +19,7 @@ import {
   currentMeasurementPinnedBy,
   measurementsOwnedBySessionUser,
 } from '../lib/measureOwnership';
-import { startMeasurementFade } from '../lib/measurementFade';
+import { setMeasurementFadeEngine, startMeasurementFade } from '../lib/measurementFade';
 import { computeMapBounds, frameMapBoundsInViewport } from '../lib/sceneBounds';
 import {
   applyMapTransformToSceneChildren,
@@ -81,7 +82,7 @@ import { DEFAULT_FOG, GLOBAL_CAMPAIGN_ID } from '../lib/types';
 import {
   addTokenDropToGroup,
   defaultTokenLibraryLayout,
-  migrateTokenLibraryLayout,
+  syncTokenLibraryLayout,
   removeImportGroupEntries,
   removeEntry,
   moveLibraryEntryToGroup,
@@ -238,12 +239,8 @@ export function getMovingTokenDropPayloads(
 }
 
 interface UiState {
-  leftCollapsed: boolean;
-  rightCollapsed: boolean;
   scenePreviewUrls: Record<string, string>;
   setScenePreviewUrl: (sceneId: SceneId, dataUrl: string) => void;
-  setLeftCollapsed: (v: boolean) => void;
-  setRightCollapsed: (v: boolean) => void;
 }
 
 interface SessionState {
@@ -339,6 +336,7 @@ interface CampaignState {
   ) => void;
   addMeasurement: (sceneId: SceneId, m: MeasurementObject) => void;
   removeMeasurement: (sceneId: SceneId, id: string) => void;
+  removeMeasurements: (sceneId: SceneId, ids: string[]) => void;
   addDrawStroke: (sceneId: SceneId, stroke: DrawStroke) => void;
   removeDrawStroke: (sceneId: SceneId, id: string) => void;
   removeDrawStrokes: (sceneId: SceneId, ids: string[]) => void;
@@ -428,16 +426,6 @@ function resolveActiveSceneAfterCampaignChange(
   }
   const deckScene = campaign.sceneDeck.find((n) => n.type === 'scene');
   return deckScene?.type === 'scene' ? deckScene.sceneId : Object.keys(campaign.scenes)[0] ?? null;
-}
-
-function loadUiPref(key: string, fallback: boolean): boolean {
-  try {
-    const v = localStorage.getItem(key);
-    if (v === null) return fallback;
-    return v === 'true';
-  } catch {
-    return fallback;
-  }
 }
 
 const PLAYER_NAME_KEY = 'battle-map-player-name';
@@ -539,7 +527,7 @@ export const useStore = create<AppStore>((set, get) => ({
     const { campaign, activeSceneId, viewportWidth, viewportHeight } = get();
     const scene =
       activeSceneId && campaign?.scenes[activeSceneId]
-        ? migrateSceneMaps(campaign.scenes[activeSceneId])
+        ? normalizeScene(campaign.scenes[activeSceneId])
         : null;
     const mapBounds = scene ? computeMapBounds(scene) : null;
     const centroid = scene ? computeMapsCentroid(scene) : null;
@@ -567,7 +555,7 @@ export const useStore = create<AppStore>((set, get) => ({
   alternatingDiagonals: false,
   coneAngleDeg: Math.round((Math.atan(0.5) * 360) / Math.PI * 100) / 100,
   measureDisplayStyle: 'vtt',
-  measureDebugDualView: true,
+  measureDebugDualView: false,
   fogPreview: null,
   fogOpaquePreview: false,
   mapEditDragging: false,
@@ -788,22 +776,7 @@ export const useStore = create<AppStore>((set, get) => ({
     }),
   setEphemeralMeasure: (m) => set({ ephemeralMeasure: m }),
   fadeAndRemoveMeasurement: (sceneId, id) => {
-    startMeasurementFade(sceneId, id, {
-      onOpacity: (fadeId, opacity) => {
-        set((s) => {
-          if (opacity === null) {
-            if (!(fadeId in s.fadingMeasurements)) return s;
-            const next = { ...s.fadingMeasurements };
-            delete next[fadeId];
-            return { fadingMeasurements: next };
-          }
-          return { fadingMeasurements: { ...s.fadingMeasurements, [fadeId]: opacity } };
-        });
-      },
-      onRemove: (removeSceneId, removeId) => {
-        get().removeMeasurement(removeSceneId, removeId);
-      },
-    });
+    startMeasurementFade(sceneId, id);
   },
   fadeAndRemoveMeasurementsForCurrentUser: (sceneId) => {
     const state = get();
@@ -920,21 +893,11 @@ export const useStore = create<AppStore>((set, get) => ({
     return false;
   },
 
-  leftCollapsed: loadUiPref('ui.leftCollapsed', false),
-  rightCollapsed: loadUiPref('ui.rightCollapsed', false),
   scenePreviewUrls: {},
   setScenePreviewUrl: (sceneId, dataUrl) =>
     set((s) => ({
       scenePreviewUrls: { ...s.scenePreviewUrls, [sceneId]: dataUrl },
     })),
-  setLeftCollapsed: (v) => {
-    localStorage.setItem('ui.leftCollapsed', String(v));
-    set({ leftCollapsed: v });
-  },
-  setRightCollapsed: (v) => {
-    localStorage.setItem('ui.rightCollapsed', String(v));
-    set({ rightCollapsed: v });
-  },
 
   role: 'gm',
   playerView: false,
@@ -1077,7 +1040,7 @@ export const useStore = create<AppStore>((set, get) => ({
     get().runHistorySuppressed(() => {
       const scenes: Record<string, Scene> = {};
       for (const [id, scene] of Object.entries(c.scenes)) {
-        scenes[id] = migrateSceneMaps(scene);
+        scenes[id] = normalizeScene(scene);
       }
       const activeSceneId =
         (c.lastActiveSceneId && scenes[c.lastActiveSceneId]
@@ -1112,7 +1075,7 @@ export const useStore = create<AppStore>((set, get) => ({
     }
     const scenes: Record<string, Scene> = {};
     for (const [id, scene] of Object.entries(c.scenes)) {
-      scenes[id] = migrateSceneMaps(scene);
+      scenes[id] = normalizeScene(scene);
     }
     const activeSceneId = c.lastActiveSceneId ?? Object.keys(scenes)[0] ?? null;
     set({
@@ -1132,7 +1095,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setActiveScene: (id) => {
     const { campaign } = get();
     if (!campaign) return;
-    const scene = migrateSceneMaps(campaign.scenes[id]);
+    const scene = normalizeScene(campaign.scenes[id]);
     setGridOffset(scene.gridOffset ?? DEFAULT_GRID_OFFSET);
     const updated = { ...campaign, lastActiveSceneId: id, updatedAt: Date.now() };
     set({ campaign: updated, activeSceneId: id, dirty: true });
@@ -1332,7 +1295,7 @@ export const useStore = create<AppStore>((set, get) => ({
     const scene = state.campaign?.scenes[sceneId];
     if (!scene || !state.campaign) return;
 
-    const recentered = recenterSceneGrid(migrateSceneMaps(scene));
+    const recentered = recenterSceneGrid(normalizeScene(scene));
     if (!recentered) return;
 
     get().commitCampaignUpdate(
@@ -1617,31 +1580,13 @@ export const useStore = create<AppStore>((set, get) => ({
       };
 
       const rectPoly = rectToPoly(rect);
-      const hiddenMp = fogToMulti(s.fog.unexploredMask);
-      const revealedMp = fogToMulti(s.fog.revealedMask);
-
-      if (mode === 'hide') {
-        const nextHidden = polygonClipping.union(hiddenMp, rectPoly) as MultiPolygon;
-        const nextRevealed = polygonClipping.difference(revealedMp, rectPoly) as MultiPolygon;
-        return {
-          ...s,
-          fog: normalizeFogState({
-            ...s.fog,
-            unexploredMask: multiToFog(nextHidden),
-            revealedMask: multiToFog(nextRevealed),
-          }),
-        };
-      }
-
-      const nextRevealed = polygonClipping.union(revealedMp, rectPoly) as MultiPolygon;
-      const nextHidden = polygonClipping.difference(hiddenMp, rectPoly) as MultiPolygon;
-
+      const { unexploredMp, revealedMp } = mergeFogWithShape(s.fog, rectPoly, mode);
       return {
         ...s,
         fog: normalizeFogState({
           ...s.fog,
-          revealedMask: multiToFog(nextRevealed),
-          unexploredMask: multiToFog(nextHidden),
+          unexploredMask: multiToFog(unexploredMp),
+          revealedMask: multiToFog(revealedMp),
         }),
       };
     });
@@ -1731,30 +1676,13 @@ export const useStore = create<AppStore>((set, get) => ({
       };
 
       const strokeMp = strokeToPoly(points);
-      const hiddenMp = fogToMulti(s.fog.unexploredMask);
-      const revealedMp = fogToMulti(s.fog.revealedMask);
-
-      if (mode === 'hide') {
-        const nextHidden = polygonClipping.union(hiddenMp, strokeMp) as MultiPolygon;
-        const nextRevealed = polygonClipping.difference(revealedMp, strokeMp) as MultiPolygon;
-        return {
-          ...s,
-          fog: normalizeFogState({
-            ...s.fog,
-            unexploredMask: multiToFog(nextHidden),
-            revealedMask: multiToFog(nextRevealed),
-          }),
-        };
-      }
-
-      const nextRevealed = polygonClipping.union(revealedMp, strokeMp) as MultiPolygon;
-      const nextHidden = polygonClipping.difference(hiddenMp, strokeMp) as MultiPolygon;
+      const { unexploredMp, revealedMp } = mergeFogWithShape(s.fog, strokeMp, mode);
       return {
         ...s,
         fog: normalizeFogState({
           ...s.fog,
-          revealedMask: multiToFog(nextRevealed),
-          unexploredMask: multiToFog(nextHidden),
+          unexploredMask: multiToFog(unexploredMp),
+          revealedMask: multiToFog(revealedMp),
         }),
       };
     });
@@ -1802,31 +1730,14 @@ export const useStore = create<AppStore>((set, get) => ({
         return polys.map((p) => assignFogPolygonMapLayer(p, s));
       };
 
-      const hiddenMp = fogToMulti(s.fog.unexploredMask);
-      const revealedMp = fogToMulti(s.fog.revealedMask);
       const shapeMp = mp as MultiPolygon;
-
-      if (mode === 'hide') {
-        const nextHidden = polygonClipping.union(hiddenMp, shapeMp) as MultiPolygon;
-        const nextRevealed = polygonClipping.difference(revealedMp, shapeMp) as MultiPolygon;
-        return {
-          ...s,
-          fog: normalizeFogState({
-            ...s.fog,
-            unexploredMask: multiToFog(nextHidden),
-            revealedMask: multiToFog(nextRevealed),
-          }),
-        };
-      }
-
-      const nextRevealed = polygonClipping.union(revealedMp, shapeMp) as MultiPolygon;
-      const nextHidden = polygonClipping.difference(hiddenMp, shapeMp) as MultiPolygon;
+      const { unexploredMp, revealedMp } = mergeFogWithShape(s.fog, shapeMp, mode);
       return {
         ...s,
         fog: normalizeFogState({
           ...s.fog,
-          revealedMask: multiToFog(nextRevealed),
-          unexploredMask: multiToFog(nextHidden),
+          unexploredMask: multiToFog(unexploredMp),
+          revealedMask: multiToFog(revealedMp),
         }),
       };
     });
@@ -1856,11 +1767,17 @@ export const useStore = create<AppStore>((set, get) => ({
     }));
   },
   removeMeasurement: (sceneId, id) => {
+    get().removeMeasurements(sceneId, [id]);
+  },
+  removeMeasurements: (sceneId, ids) => {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
     get().updateScene(sceneId, (s) => ({
       ...s,
-      measurements: s.measurements.filter((m) => m.id !== id),
+      measurements: s.measurements.filter((m) => !idSet.has(m.id)),
     }));
-    if (get().selectedMeasurementId === id) get().clearSelection();
+    const selected = get().selectedMeasurementId;
+    if (selected && idSet.has(selected)) get().clearSelection();
   },
   addDrawStroke: (sceneId, stroke) => {
     const state = get();
@@ -1978,7 +1895,7 @@ export const useStore = create<AppStore>((set, get) => ({
     const assetIds = assets
       .filter((a) => isTokenLibraryAsset(a, mapIds))
       .map((a) => a.id);
-    const layout = migrateTokenLibraryLayout(campaign.tokenLibrary, assetIds);
+    const layout = syncTokenLibraryLayout(campaign.tokenLibrary, assetIds);
     if (!campaign.tokenLibrary) {
       get().runHistorySuppressed(() => {
         set({
@@ -1997,7 +1914,7 @@ export const useStore = create<AppStore>((set, get) => ({
     const assetIds = assets
       .filter((a) => isTokenLibraryAsset(a, mapIds))
       .map((a) => a.id);
-    const layout = migrateTokenLibraryLayout(stored, assetIds);
+    const layout = syncTokenLibraryLayout(stored, assetIds);
     if (!stored) {
       await saveTokenLibraryLayout(GLOBAL_CAMPAIGN_ID, layout);
     }
@@ -2138,6 +2055,35 @@ export const useStore = create<AppStore>((set, get) => ({
     }
   },
 }));
+
+setMeasurementFadeEngine({
+  onOpacity: (updates) => {
+    useStore.setState((s) => {
+      let next = s.fadingMeasurements;
+      let changed = false;
+      for (const [id, opacity] of Object.entries(updates)) {
+        if (opacity === null) {
+          if (!(id in next)) continue;
+          if (!changed) {
+            next = { ...next };
+            changed = true;
+          }
+          delete next[id];
+        } else if (next[id] !== opacity) {
+          if (!changed) {
+            next = { ...next };
+            changed = true;
+          }
+          next[id] = opacity;
+        }
+      }
+      return changed ? { fadingMeasurements: next } : s;
+    });
+  },
+  onRemove: (sceneId, ids) => {
+    useStore.getState().removeMeasurements(sceneId, ids);
+  },
+});
 
 export function useActiveScene(): Scene | null {
   const campaign = useStore((s) => s.campaign);

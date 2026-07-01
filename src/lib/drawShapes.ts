@@ -10,6 +10,8 @@ import {
   isPointInCone5e,
   isPointInConeVtt,
   line5eIncludedCells,
+  measureDistanceCells,
+  measureDistanceWorld,
   sphere5eIncludedCells,
 } from './measure';
 import { transformWorldPointBetweenMaps, type MapCorner } from './mapGeometry';
@@ -75,6 +77,18 @@ export function cubeCenterWorld(
   gridOffset = getGridOffset(),
 ): Point {
   return params.origin ?? gridCellToWorldCenter(params.center, gridOffset);
+}
+
+/** Drag start / anchor point for a measure shape. */
+export function measureShapeOrigin(
+  kind: MeasureKind,
+  params: MeasurementParams,
+  gridOffset = getGridOffset(),
+): Point {
+  if (kind === 'line') return (params as LineMeasureParams).from;
+  if (kind === 'cube') return cubeCenterWorld(params as CubeMeasureParams, gridOffset);
+  if (kind === 'sphere') return sphereCenterWorld(params as SphereMeasureParams, gridOffset);
+  return (params as ConeMeasureParams).origin;
 }
 
 export function sphereRadiusWorld(params: SphereMeasureParams): number {
@@ -148,7 +162,7 @@ export function measureParamsFromDrag(
       Math.abs(end.x - start.x),
       Math.abs(end.y - start.y),
     );
-    const radiusCells = Math.max(0, Math.round(radiusWorld / GRID_SIZE_PX));
+    const radiusCells = measureDistanceCells(radiusWorld);
     return {
       center: worldToGridCell(start, gridOffset),
       radiusCells,
@@ -156,15 +170,23 @@ export function measureParamsFromDrag(
     } satisfies CubeMeasureParams;
   }
   if (kind === 'sphere') {
-    return drawCircleParamsFromDrag(start, end, gridOffset);
+    const radiusWorldRaw = Math.hypot(end.x - start.x, end.y - start.y);
+    const radiusWorld = measureDistanceWorld(radiusWorldRaw);
+    return {
+      center: worldToGridCell(start, gridOffset),
+      radiusCells: Math.max(0, radiusWorld / GRID_SIZE_PX - 0.5),
+      origin: start,
+      radiusWorld,
+    } satisfies SphereMeasureParams;
   }
   const dir = Math.atan2(end.y - start.y, end.x - start.x);
-  const lengthWorld = coneAxialLengthFromDrag(start, end);
-  const len = Math.max(0, Math.round(lengthWorld / GRID_SIZE_PX));
+  const lengthWorldRaw = coneAxialLengthFromDrag(start, end);
+  const lengthCells = measureDistanceCells(lengthWorldRaw);
+  const lengthWorld = measureDistanceWorld(lengthWorldRaw);
   return {
     origin: start,
     direction: dir,
-    lengthCells: len,
+    lengthCells,
     lengthWorld,
     angleDeg: coneAngleDeg,
     style: displayStyle,
@@ -344,7 +366,7 @@ export function drawFillColor(color: string | undefined, alpha = 0.22): string {
 }
 
 export function drawOutlineWidth(strokeWidth: number): number {
-  return Math.max(4, strokeWidth);
+  return Math.max(1, strokeWidth);
 }
 
 export function eraserRadiusWorld(viewScale: number): number {

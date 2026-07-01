@@ -54,6 +54,16 @@ export function lineLengthFt(
   return distanceFtFromWorld(from, to, cellFt, _sizePx, alternatingDiagonals, gridOffset);
 }
 
+/** Whole grid cells for a world distance (each cell = 5 ft). */
+export function measureDistanceCells(distanceWorld: number): number {
+  return Math.max(0, Math.round(distanceWorld / GRID_SIZE_PX));
+}
+
+/** World distance snapped to 5 ft increments. */
+export function measureDistanceWorld(distanceWorld: number): number {
+  return measureDistanceCells(distanceWorld) * GRID_SIZE_PX;
+}
+
 /** PHB: width at distance d equals d → half-angle = atan(0.5) ≈ 26.57°, full ≈ 53.13°. */
 export const PHB_CONE_ANGLE_DEG = (Math.atan(0.5) * 360) / Math.PI;
 
@@ -144,6 +154,74 @@ function isCellCenterInPhbCone(
   return lateral <= forward / 2 + 0.501;
 }
 
+const ORIGIN_EDGE_EPS = 0.001;
+const AXIS_ALIGN_EPS = 0.01;
+
+/** When the origin sits on a grid edge, pick the forward square and drop the backward one. */
+function cone5eOriginCellResolution(
+  origin: Point,
+  direction: number,
+  gridOffset: Point,
+): { originCell: GridCell; exclude: GridCell[] } {
+  const base = worldToGridCell(origin, gridOffset);
+  const tl = gridCellTopLeft(base, gridOffset);
+  const lx = origin.x - tl.x;
+  const ly = origin.y - tl.y;
+  const onVerticalEdge = lx < ORIGIN_EDGE_EPS;
+  const onHorizontalEdge = ly < ORIGIN_EDGE_EPS;
+  const cos = Math.cos(direction);
+  const sin = Math.sin(direction);
+  const axisAlignedX = Math.abs(cos) > AXIS_ALIGN_EPS;
+  const axisAlignedY = Math.abs(sin) > AXIS_ALIGN_EPS;
+
+  if (onVerticalEdge && onHorizontalEdge && axisAlignedX && axisAlignedY) {
+    const originCell = {
+      col: cos >= 0 ? base.col : base.col - 1,
+      row: sin >= 0 ? base.row : base.row - 1,
+    };
+    const cornerCells: GridCell[] = [
+      { col: base.col, row: base.row },
+      { col: base.col - 1, row: base.row },
+      { col: base.col, row: base.row - 1 },
+      { col: base.col - 1, row: base.row - 1 },
+    ];
+    return {
+      originCell,
+      exclude: cornerCells.filter(
+        (c) => c.col !== originCell.col || c.row !== originCell.row,
+      ),
+    };
+  }
+
+  let col = base.col;
+  let row = base.row;
+  const exclude: GridCell[] = [];
+
+  if (onVerticalEdge && axisAlignedX) {
+    if (cos >= 0) {
+      exclude.push({ col: base.col - 1, row: base.row });
+    } else {
+      col = base.col - 1;
+      exclude.push({ col: base.col, row: base.row });
+    }
+  }
+
+  if (onHorizontalEdge && axisAlignedY) {
+    if (sin >= 0) {
+      exclude.push({ col: base.col, row: base.row - 1 });
+    } else {
+      row = base.row - 1;
+      exclude.push({ col: base.col, row: base.row });
+    }
+  }
+
+  return { originCell: { col, row }, exclude };
+}
+
+function isSameGridCell(a: GridCell, b: GridCell): boolean {
+  return a.col === b.col && a.row === b.row;
+}
+
 /** PHB grid cone: all squares whose centers fall inside the cone template. */
 export function cone5eIncludedCells(
   origin: Point,
@@ -185,7 +263,12 @@ export function cone5eIncludedCells(
       }
     }
   }
-  return included;
+  const { originCell, exclude } = cone5eOriginCellResolution(origin, direction, gridOffset);
+  if (!included.some((c) => isSameGridCell(c, originCell))) {
+    included.push(originCell);
+  }
+  if (exclude.length === 0) return included;
+  return included.filter((c) => !exclude.some((e) => isSameGridCell(c, e)));
 }
 
 /** True when the point lies in a square whose center is inside the 5e grid cone. */

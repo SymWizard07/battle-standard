@@ -24,7 +24,7 @@ const innerRightPanel: LayoutNode = {
       direction: 'col',
       sizes: [8, 84, 8],
       children: [
-        { type: 'module', id: 'session-header', moduleId: 'sessionHeader' },
+        { type: 'module', id: 'tool-options', moduleId: 'toolOptions' },
         {
           type: 'split',
           id: 'play-row',
@@ -63,7 +63,7 @@ const headerAndPlayOnly: LayoutNode = {
       direction: 'col',
       sizes: [12, 88],
       children: [
-        { type: 'module', id: 'session-header', moduleId: 'sessionHeader' },
+        { type: 'module', id: 'tool-options', moduleId: 'toolOptions' },
         { type: 'playArea', id: 'play-area' },
       ],
     },
@@ -91,7 +91,7 @@ const playAsThirdRootChild: LayoutNode = {
       direction: 'col',
       sizes: [12, 88],
       children: [
-        { type: 'module', id: 'session-header', moduleId: 'sessionHeader' },
+        { type: 'module', id: 'tool-options', moduleId: 'toolOptions' },
         { type: 'module', id: 'toolbar-pane', moduleId: 'toolbar' },
       ],
     },
@@ -140,7 +140,7 @@ const playBesideChromeCol: LayoutNode = {
       direction: 'col',
       sizes: [12, 88],
       children: [
-        { type: 'module', id: 'session-header', moduleId: 'sessionHeader' },
+        { type: 'module', id: 'tool-options', moduleId: 'toolOptions' },
         { type: 'module', id: 'toolbar-pane', moduleId: 'toolbar' },
       ],
     },
@@ -171,7 +171,7 @@ const scenesBesidePlayInCenter: LayoutNode = {
       direction: 'col',
       sizes: [10, 80, 10],
       children: [
-        { type: 'module', id: 'session-header', moduleId: 'sessionHeader' },
+        { type: 'module', id: 'tool-options', moduleId: 'toolOptions' },
         {
           type: 'split',
           id: 'play-row',
@@ -207,7 +207,7 @@ const centerColumnOnly: LayoutNode = {
       direction: 'col',
       sizes: [8, 84, 8],
       children: [
-        { type: 'module', id: 'session-header', moduleId: 'sessionHeader' },
+        { type: 'module', id: 'tool-options', moduleId: 'toolOptions' },
         { type: 'playArea', id: 'play-area' },
         { type: 'module', id: 'toolbar-pane', moduleId: 'toolbar' },
       ],

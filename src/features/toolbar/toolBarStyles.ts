@@ -1,4 +1,4 @@
-/** Shared 44px height for top-bar tool controls. */
+/** Shared 44px height for compact inline tool controls (e.g. players row). */
 export const TOOLBAR_CONTROL_H = 'h-11';
 
 export const toolBarControl = `${TOOLBAR_CONTROL_H} shrink-0`;
@@ -16,7 +16,7 @@ export const toolBarSection =
 export const toolBarSectionLabel =
   'shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-500';
 
-export const toolBarRow = 'flex shrink-0 flex-nowrap items-center gap-2';
+export const toolBarRow = 'flex h-full min-h-0 w-full shrink-0 flex-nowrap items-stretch gap-1';
 
 export const toolBarScroll =
-  `tool-options-scroll flex ${TOOLBAR_CONTROL_H} min-w-0 flex-nowrap items-center gap-2 overflow-x-auto`;
+  'tool-options-scroll flex h-full min-h-0 w-full min-w-0 flex-nowrap items-stretch overflow-x-auto';

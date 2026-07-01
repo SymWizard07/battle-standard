@@ -6,7 +6,8 @@ import { ToolOptionsBar } from '../toolbar/ToolOptionsBar';
 import type { ModuleId } from './schema/layoutSchema';
 import { useLayoutModuleContext } from './LayoutModuleContext';
 import { CanvasModule } from './modules/CanvasModule';
-import { InfoModule, SessionHeaderModule } from './modules/SessionHeaderModule';
+import { InfoModule } from './modules/InfoModule';
+import { SettingsModule } from './modules/SettingsModule';
 
 function ScenesModule() {
   const { device } = useLayoutModuleContext();
@@ -28,8 +29,8 @@ function TokensModule() {
 
 function ToolOptionsModule() {
   return (
-    <div className="flex h-full min-h-11 items-center border-b border-slate-700 bg-slate-900/95 px-3">
-      <ToolOptionsBar className="min-h-11 min-w-0 flex-1 justify-end" />
+    <div className="flex h-full min-h-0 items-stretch border-b border-slate-700 bg-slate-900/95 px-1 py-0.5">
+      <ToolOptionsBar className="h-full w-full" />
     </div>
   );
 }
@@ -49,10 +50,10 @@ function CanvasModuleWrapper() {
 export const moduleRegistry: Record<ModuleId, ComponentType> = {
   scenes: ScenesModule,
   tokens: TokensModule,
+  settings: SettingsModule,
   toolOptions: ToolOptionsModule,
   toolbar: ToolbarModule,
   canvas: CanvasModuleWrapper,
-  sessionHeader: SessionHeaderModule,
   info: InfoModule,
 };
 

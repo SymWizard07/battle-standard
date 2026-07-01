@@ -369,7 +369,6 @@ export function ContextPanel() {
   const setMovePreview = useStore((s) => s.setMovePreview);
   const liveViewport = useLiveViewport();
   const { x: stageX, y: stageY, scale } = liveViewport;
-  const rightCollapsed = useStore((s) => s.rightCollapsed);
   const clearSelection = useStore((s) => s.clearSelection);
   const toggleStatus = useStore((s) => s.toggleStatus);
   const toggleVitalityState = useStore((s) => s.toggleVitalityState);
@@ -525,7 +524,6 @@ export function ContextPanel() {
     interactionMode,
     movePreviewPos,
     movePreviewPositions,
-    rightCollapsed,
   ]);
 
   useLayoutEffect(() => {
@@ -555,7 +553,7 @@ export function ContextPanel() {
     if (nx !== pos.x || ny !== pos.y) {
       setPos({ x: nx, y: ny });
     }
-  }, [pos.x, pos.y, selectedTokens.length, measurement, rightCollapsed]);
+  }, [pos.x, pos.y, selectedTokens.length, measurement]);
 
   if (!selectedTokens.length && !measurement) return null;
 

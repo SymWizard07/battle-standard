@@ -28,7 +28,7 @@ function testParseFolder() {
   assertEqual(campaignIdFromFolderName('Dragon Heist--abc-123'), 'abc-123');
   assertEqual(campaignIdFromFolderName('legacy-uuid-only'), 'legacy-uuid-only');
   assertEqual(folderNameMatchesCampaignId('Dragon Heist--abc-123', 'abc-123'), true);
-  assertEqual(folderNameMatchesCampaignId('legacy-uuid-only', 'legacy-uuid-only'), true);
+  assertEqual(folderNameMatchesCampaignId('legacy-uuid-only', 'legacy-uuid-only'), false);
   assertEqual(folderNameMatchesCampaignId('Other--abc-123', 'xyz'), false);
 }
 

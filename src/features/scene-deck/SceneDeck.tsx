@@ -3,10 +3,6 @@ import type { SceneDeckNode } from '../../lib/types';
 import { useStore } from '../../store/useStore';
 import { pushSceneToPlayers } from '../../sync/syncProvider';
 import { confirmAction } from '../confirm/confirmDialogStore';
-import { APP_TITLE } from '../../hooks/useDocumentTitle';
-import { InfoModal } from '../settings/InfoModal';
-import { useSettingsUiStore } from '../settings/settingsUiStore';
-import { InfoIcon, SettingsIcon } from '../settings/SettingsIcons';
 import { ScenePreview } from './ScenePreview';
 
 interface Props {
@@ -44,8 +40,6 @@ export function SceneDeck({
   const scenePreviewUrls = useStore((s) => s.scenePreviewUrls);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
-  const setSettingsOpen = useSettingsUiStore((s) => s.setOpen);
-  const [infoOpen, setInfoOpen] = useState(false);
 
   if (!campaign) return null;
 
@@ -254,32 +248,6 @@ export function SceneDeck({
         )}
       </ul>
       )}
-
-      {(variant === 'inline' || variant === 'module' || !collapsed) && !isCompact && (
-        <footer className="safe-bottom border-t border-slate-700 p-3">
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              title="Settings (Ctrl+,)"
-              className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-slate-800 font-medium text-slate-200 hover:bg-slate-750"
-            >
-              <SettingsIcon />
-              Settings
-            </button>
-            <button
-              type="button"
-              onClick={() => setInfoOpen(true)}
-              className="flex min-h-11 min-w-11 items-center justify-center rounded-xl bg-slate-800 text-slate-200 hover:bg-slate-750"
-              aria-label={`How to use ${APP_TITLE}`}
-            >
-              <InfoIcon />
-            </button>
-          </div>
-        </footer>
-      )}
-
-      <InfoModal open={infoOpen} onClose={() => setInfoOpen(false)} />
     </div>
   );
 

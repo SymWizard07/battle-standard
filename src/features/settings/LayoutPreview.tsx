@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
-import { Group, Panel, Separator } from 'react-resizable-panels';
-import { getPanelCollapse } from '../layout/layoutPanelChrome';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Group, Panel, Separator, useGroupRef } from 'react-resizable-panels';
+import { getPanelCollapse, type SplitCollapseLink } from '../layout/layoutPanelChrome';
+import { useSnappingSplitHandlers } from '../layout/useSnappingSplitHandlers';
 import type { LayoutNode, SplitLayoutNode, TabsLayoutNode } from '../layout/schema/layoutSchema';
 import type { ActiveDragState, DragHoverPoint, SplitEdge } from '../layout/layoutTreeUtils';
 import {
@@ -16,8 +17,9 @@ import {
 import { LAYOUT_MODULE_DRAG_TYPE } from '../layout/LayoutModuleContext';
 import { decodeTabDragPayload, encodeTabDragPayload, LAYOUT_TAB_DRAG_TYPE } from '../layout/shell/layoutContext';
 import type { CollapseDirection } from '../layout/schema/layoutSchema';
-import { attachPaletteDragImage, previewBoxClass, previewEdgeOverlayClass } from './layoutDragGhost';
+import { attachPaletteDragImage, previewBoxClass, previewEdgeOverlayClass, previewSizeMatchPanelClass } from './layoutDragGhost';
 import { PreviewCollapseBadge } from './PreviewCollapseBadge';
+import { LayoutPreviewSnapProvider, useLayoutPreviewSnap } from './LayoutPreviewSnapContext';
 
 type Props = {
   node: LayoutNode;
@@ -38,7 +40,39 @@ type Props = {
   hoverEdge?: SplitEdge;
   activeDrag: ActiveDragState | null;
   acceptPreviewPointer: (clientX: number, clientY: number) => boolean;
+  inheritedSplitCollapse?: SplitCollapseLink;
 };
+
+function resolvePreviewCollapse(
+  node: LayoutNode,
+  _path: number[],
+  inherited?: SplitCollapseLink,
+): CollapseDirection | undefined {
+  const own = getPanelCollapse(node);
+  return own ?? inherited?.direction;
+}
+
+function resolveCollapseBadgePath(
+  node: LayoutNode,
+  path: number[],
+  inherited?: SplitCollapseLink,
+): number[] | undefined {
+  const own = getPanelCollapse(node);
+  if (own) return path;
+  if (inherited?.direction) return inherited.fromPath;
+  return undefined;
+}
+
+function resolveCollapseLinkId(
+  node: LayoutNode,
+  inherited?: SplitCollapseLink,
+): string | undefined {
+  const own = getPanelCollapse(node);
+  if (own && (node.type === 'module' || node.type === 'tabs' || node.type === 'split')) {
+    return node.id;
+  }
+  return inherited?.linkId;
+}
 
 function findCommittedPathAnchor(from: HTMLElement): HTMLElement {
   let node: HTMLElement | null = from.parentElement;
@@ -90,7 +124,16 @@ function isTabDragSource(
   );
 }
 
-export function LayoutPreview({
+export function LayoutPreview(props: Props) {
+  const isRoot = (props.path ?? []).length === 0;
+  const content = <LayoutPreviewInner {...props} />;
+  if (isRoot) {
+    return <LayoutPreviewSnapProvider>{content}</LayoutPreviewSnapProvider>;
+  }
+  return content;
+}
+
+function LayoutPreviewInner({
   node,
   path = [],
   layoutKey,
@@ -109,6 +152,7 @@ export function LayoutPreview({
   hoverEdge,
   activeDrag,
   acceptPreviewPointer,
+  inheritedSplitCollapse,
 }: Props) {
   const content =
     node.type === 'empty' ? (
@@ -143,6 +187,7 @@ export function LayoutPreview({
         hoverEdge={hoverEdge}
         activeDrag={activeDrag}
         acceptPreviewPointer={acceptPreviewPointer}
+        inheritedSplitCollapse={inheritedSplitCollapse}
       />
     ) : node.type === 'tabs' ? (
       <PreviewTabs
@@ -156,7 +201,9 @@ export function LayoutPreview({
         onDragEnd={onDragEnd}
         onTabSelect={onTabSelect}
         onTabMove={onTabMove}
-        collapse={node.collapse}
+        collapse={resolvePreviewCollapse(node, path, inheritedSplitCollapse)}
+        collapseFromPath={resolveCollapseBadgePath(node, path, inheritedSplitCollapse)}
+        collapseLinkId={resolveCollapseLinkId(node, inheritedSplitCollapse)}
         ghostPath={ghostPath}
         dropTargetPath={dropTargetPath}
         hoverEdge={hoverEdge}
@@ -167,7 +214,9 @@ export function LayoutPreview({
       <PreviewLeaf
         label={getNodeLabel(node)}
         path={path}
-        collapse={getPanelCollapse(node)}
+        collapse={resolvePreviewCollapse(node, path, inheritedSplitCollapse)}
+        collapseFromPath={resolveCollapseBadgePath(node, path, inheritedSplitCollapse)}
+        collapseLinkId={resolveCollapseLinkId(node, inheritedSplitCollapse)}
         onDrop={onDrop}
         onDragHover={onDragHover}
         onContainerDragStart={onContainerDragStart}
@@ -206,6 +255,7 @@ type SplitProps = SharedProps & {
   layoutKey: string;
   previewLocked: boolean;
   onSplitResize: (path: number[], sizes: number[]) => void;
+  inheritedSplitCollapse?: SplitCollapseLink;
 };
 
 function PreviewSplit({
@@ -227,17 +277,42 @@ function PreviewSplit({
   hoverEdge,
   activeDrag,
   acceptPreviewPointer,
+  inheritedSplitCollapse,
 }: SplitProps) {
   const orientation = node.direction === 'row' ? 'horizontal' : 'vertical';
+  const childInherited: SplitCollapseLink | undefined = node.collapse
+    ? { direction: node.collapse, fromPath: path, linkId: node.id }
+    : inheritedSplitCollapse;
+  const groupRef = useGroupRef();
+  const groupElementRef = useRef<HTMLDivElement>(null);
+  const { setSizeMatchedPanelIds } = useLayoutPreviewSnap();
   const defaultLayout = buildDefaultSplitLayout(node.children, node.sizes, {
     startCollapsedPanels: false,
   });
+  const childIds = useMemo(() => node.children.map((child) => child.id), [node.children]);
 
-  const handleLayoutChanged = (layout: Record<string, number>) => {
-    if (previewLocked) return;
-    const sizes = node.children.map((child) => layout[child.id] ?? 0);
-    onSplitResize(path, sizes);
-  };
+  const commitLayout = useCallback(
+    (layout: Record<string, number>) => {
+      if (previewLocked) return;
+      const sizes = node.children.map((child) => layout[child.id] ?? 0);
+      onSplitResize(path, sizes);
+    },
+    [node.children, onSplitResize, path, previewLocked],
+  );
+
+  const { onLayoutChange, onLayoutChanged, syncPrevLayout } = useSnappingSplitHandlers({
+    enabled: !previewLocked,
+    orientation,
+    childIds,
+    groupRef,
+    groupElementRef,
+    onCommit: commitLayout,
+    onSnapSizeMatch: setSizeMatchedPanelIds,
+  });
+
+  useLayoutEffect(() => {
+    syncPrevLayout(defaultLayout);
+  }, [defaultLayout, syncPrevLayout]);
 
   return (
     <div
@@ -246,10 +321,13 @@ function PreviewSplit({
     >
       <Group
         key={`${layoutKey}:${splitPanelGroupKey(node)}`}
+        groupRef={groupRef}
+        elementRef={groupElementRef}
         id={`preview-${node.id}`}
         orientation={orientation}
         defaultLayout={defaultLayout}
-        onLayoutChanged={previewLocked ? undefined : handleLayoutChanged}
+        onLayoutChange={previewLocked ? undefined : onLayoutChange}
+        onLayoutChanged={previewLocked ? undefined : onLayoutChanged}
         className="h-full min-h-0 w-full flex-1"
       >
       {node.children.map((child, i) => {
@@ -282,6 +360,7 @@ function PreviewSplit({
             hoverEdge={hoverEdge}
             activeDrag={activeDrag}
             acceptPreviewPointer={acceptPreviewPointer}
+            inheritedSplitCollapse={childInherited}
           />
         );
       })}
@@ -300,6 +379,7 @@ type SplitChildProps = SharedProps & {
   onSplitResize: SplitProps['onSplitResize'];
   isGhost: boolean;
   isDropTarget: boolean;
+  inheritedSplitCollapse?: SplitCollapseLink;
 };
 
 function PreviewSplitChild({
@@ -325,7 +405,10 @@ function PreviewSplitChild({
   hoverEdge,
   activeDrag,
   acceptPreviewPointer,
+  inheritedSplitCollapse,
 }: SplitChildProps) {
+  const { sizeMatchedPanelIds } = useLayoutPreviewSnap();
+  const isSizeMatched = sizeMatchedPanelIds.has(child.id);
   // Leaf/tab panels render their own edge overlay; only wrap nested splits here.
   const childRendersEdgePreview =
     child.type === 'module' ||
@@ -339,7 +422,9 @@ function PreviewSplitChild({
       <Panel
         id={child.id}
         minSize={5}
-        className={`h-full min-h-0 min-w-0 overflow-hidden ${
+        className={`h-full min-h-0 min-w-0 overflow-hidden transition-colors duration-150 ${previewSizeMatchPanelClass(
+          isSizeMatched && !isGhost,
+        )} ${
           isGhost
             ? 'ring-2 ring-inset ring-sky-400'
             : isDropTarget
@@ -353,7 +438,7 @@ function PreviewSplitChild({
               <span className="text-[10px] font-medium text-sky-100">Split</span>
             </div>
           )}
-          <LayoutPreview
+          <LayoutPreviewInner
             node={child}
             path={childPath}
             layoutKey={layoutKey}
@@ -372,6 +457,7 @@ function PreviewSplitChild({
             hoverEdge={hoverEdge}
             activeDrag={activeDrag}
             acceptPreviewPointer={acceptPreviewPointer}
+            inheritedSplitCollapse={inheritedSplitCollapse}
           />
         </div>
       </Panel>
@@ -451,6 +537,8 @@ type LeafProps = {
   label: string;
   path: number[];
   collapse?: CollapseDirection;
+  collapseFromPath?: number[];
+  collapseLinkId?: string;
   onDrop: Props['onDrop'];
   onDragHover: Props['onDragHover'];
   onContainerDragStart: Props['onContainerDragStart'];
@@ -467,6 +555,8 @@ function PreviewLeaf({
   label,
   path,
   collapse,
+  collapseFromPath,
+  collapseLinkId,
   onDrop,
   onDragHover,
   onContainerDragStart,
@@ -521,10 +611,11 @@ function PreviewLeaf({
           <span className="text-[10px] font-medium text-sky-100">Split</span>
         </div>
       )}
-      {collapse && (
+      {collapse && collapseFromPath && collapseLinkId && (
         <PreviewCollapseBadge
           collapse={collapse}
-          onDragStart={onCollapseAttachedDragStart(path)}
+          linkId={collapseLinkId}
+          onDragStart={onCollapseAttachedDragStart(collapseFromPath)}
           onDragEnd={onDragEnd}
         />
       )}
@@ -581,12 +672,16 @@ type TabsProps = SharedProps & {
   node: TabsLayoutNode;
   path: number[];
   collapse?: CollapseDirection;
+  collapseFromPath?: number[];
+  collapseLinkId?: string;
 };
 
 function PreviewTabs({
   node,
   path,
   collapse,
+  collapseFromPath,
+  collapseLinkId,
   onDrop,
   onDragHover,
   onContainerDragStart,
@@ -652,10 +747,11 @@ function PreviewTabs({
           <span className="text-[10px] font-medium text-sky-100">Split</span>
         </div>
       )}
-      {collapse && (
+      {collapse && collapseFromPath && collapseLinkId && (
         <PreviewCollapseBadge
           collapse={collapse}
-          onDragStart={onCollapseAttachedDragStart(path)}
+          linkId={collapseLinkId}
+          onDragStart={onCollapseAttachedDragStart(collapseFromPath)}
           onDragEnd={onDragEnd}
         />
       )}

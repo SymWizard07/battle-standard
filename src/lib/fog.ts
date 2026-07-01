@@ -9,10 +9,7 @@ export function isFogFullyClear(fog: FogState): boolean {
   );
 }
 
-/** Drop full-fog mode when nothing is hidden anymore. */
+/** Normalize fog state after edits (no-op for now; full-grid fog stays until explicitly cleared). */
 export function normalizeFogState(fog: FogState): FogState {
-  if (fog.defaultHidden && fog.unexploredMask.length === 0) {
-    return { ...fog, defaultHidden: false };
-  }
   return fog;
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Circle, Group, Line, Rect } from 'react-konva';
 import { isFogFullyClear } from '../../lib/fog';
-import type { FogPolygon, FogPreview, FogState, Point } from '../../lib/types';
+import type { FogPolygon, FogPreview, FogState, Point, WorldBounds } from '../../lib/types';
 import { GRID_SIZE_PX } from '../../lib/fixedGrid';
 import { gridCellToWorldCenter } from '../../lib/grid';
 import { ConeShape } from '../ConeShape';
@@ -10,6 +10,88 @@ import { useStore, seesAsPlayer } from '../../store/useStore';
 interface Props {
   fog: FogState;
   fogPreview: FogPreview | null;
+  gridOffset: Point;
+  /** Scene deck snapshot — render fog as players see it (opaque, no tool preview). */
+  renderAsPlayer?: boolean;
+  /** Lock noise UVs (no drift); used for scene deck thumbnails. */
+  fixedFogPattern?: boolean;
+}
+
+const FOG_TEXTURE_SIZE = 512;
+const FOG_PATTERN_SCALE = 1.25;
+const FOG_WORLD_HALF_EXTENT = 1_000_000;
+
+function positiveMod(n: number, m: number): number {
+  return ((n % m) + m) % m;
+}
+
+function fullGridFogBounds(gridOffset: Point): WorldBounds {
+  return {
+    minX: gridOffset.x - FOG_WORLD_HALF_EXTENT,
+    minY: gridOffset.y - FOG_WORLD_HALF_EXTENT,
+    maxX: gridOffset.x + FOG_WORLD_HALF_EXTENT,
+    maxY: gridOffset.y + FOG_WORLD_HALF_EXTENT,
+  };
+}
+
+function patternOffset(worldOrigin: Point, drift: { x: number; y: number }): Point {
+  return {
+    x: positiveMod(drift.x - worldOrigin.x * FOG_PATTERN_SCALE, FOG_TEXTURE_SIZE),
+    y: positiveMod(drift.y - worldOrigin.y * FOG_PATTERN_SCALE, FOG_TEXTURE_SIZE),
+  };
+}
+
+function fogPatternProps(
+  noiseImage: HTMLImageElement,
+  drift: { x: number; y: number },
+  worldOrigin: Point,
+): {
+  fillPatternImage: HTMLImageElement;
+  fillPatternRepeat: 'repeat';
+  fillPatternScaleX: number;
+  fillPatternScaleY: number;
+  fillPatternOffsetX: number;
+  fillPatternOffsetY: number;
+} {
+  const off = patternOffset(worldOrigin, drift);
+  return {
+    fillPatternImage: noiseImage,
+    fillPatternRepeat: 'repeat',
+    fillPatternScaleX: FOG_PATTERN_SCALE,
+    fillPatternScaleY: FOG_PATTERN_SCALE,
+    fillPatternOffsetX: off.x,
+    fillPatternOffsetY: off.y,
+  };
+}
+
+function FullGridFogBackdrop({
+  bounds,
+  fill,
+  noiseImage,
+  drift,
+  worldOrigin,
+}: {
+  bounds: WorldBounds;
+  fill: string;
+  noiseImage?: HTMLImageElement | null;
+  drift?: { x: number; y: number };
+  worldOrigin: Point;
+}) {
+  const pattern =
+    noiseImage && drift ? fogPatternProps(noiseImage, drift, worldOrigin) : null;
+  const shapeFill = pattern ?? { fill };
+  const w = bounds.maxX - bounds.minX;
+  const h = bounds.maxY - bounds.minY;
+  return (
+    <Rect
+      x={bounds.minX}
+      y={bounds.minY}
+      width={w}
+      height={h}
+      listening={false}
+      {...shapeFill}
+    />
+  );
 }
 
 function polygonToRect(points: Point[]): { x: number; y: number; w: number; h: number } | null {
@@ -27,19 +109,41 @@ function getRings(p: FogPolygon | any): Point[][] {
   return [];
 }
 
+function polygonWorldOrigin(polygon: FogPolygon): Point {
+  const outer = getRings(polygon)[0] ?? [];
+  if (outer.length === 0) return { x: 0, y: 0 };
+  let minX = Infinity;
+  let minY = Infinity;
+  for (const p of outer) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+  }
+  return { x: minX, y: minY };
+}
+
 function FogShape({
   polygon,
   fill,
   stroke,
   listening = false,
+  noiseImage,
+  drift,
+  patternWorldOrigin,
 }: {
   polygon: FogPolygon;
   fill: string;
   stroke?: string;
   listening?: boolean;
+  noiseImage?: HTMLImageElement | null;
+  drift?: { x: number; y: number };
+  patternWorldOrigin?: Point;
 }) {
   const rings = getRings(polygon);
   const outer = rings[0] ?? [];
+  const origin = patternWorldOrigin ?? polygonWorldOrigin(polygon);
+  const pattern =
+    noiseImage && drift ? fogPatternProps(noiseImage, drift, origin) : null;
+  const shapeFill = pattern ?? { fill };
 
   // Legacy / degenerate: treat 2 points as a rect bounds.
   if (outer.length === 2) {
@@ -51,7 +155,7 @@ function FogShape({
         y={rect.y}
         width={rect.w}
         height={rect.h}
-        fill={fill}
+        {...shapeFill}
         stroke={stroke}
         strokeWidth={stroke ? 2 : 0}
         listening={listening}
@@ -69,7 +173,7 @@ function FogShape({
       <Line
         points={outerPts}
         closed
-        fill={fill}
+        {...shapeFill}
         stroke={stroke}
         strokeWidth={stroke ? 2 : 0}
         listening={listening}
@@ -82,7 +186,7 @@ function FogShape({
       <Line
         points={outerPts}
         closed
-        fill={fill}
+        {...shapeFill}
         stroke={stroke}
         strokeWidth={stroke ? 2 : 0}
         listening={listening}
@@ -118,13 +222,12 @@ function PreviewStroke({ preview, stroke }: { preview: FogPreview; stroke: strin
 
 function PreviewRect({ preview, stroke }: { preview: FogPreview; stroke: string }) {
   if (!preview.from || !preview.to) return null;
-  const r = preview.radius ?? 0;
-  const xs = [preview.from.x, preview.to.x];
-  const ys = [preview.from.y, preview.to.y];
-  const x = Math.min(...xs) - r;
-  const y = Math.min(...ys) - r;
-  const w = Math.abs(preview.to.x - preview.from.x) + r * 2;
-  const h = Math.abs(preview.to.y - preview.from.y) + r * 2;
+  if (preview.from.x === preview.to.x && preview.from.y === preview.to.y) return null;
+  const x = Math.min(preview.from.x, preview.to.x);
+  const y = Math.min(preview.from.y, preview.to.y);
+  const w = Math.abs(preview.to.x - preview.from.x);
+  const h = Math.abs(preview.to.y - preview.from.y);
+  if (w < 1 && h < 1) return null;
   return (
     <Rect
       x={x}
@@ -208,11 +311,53 @@ function RevealCutouts({ fog }: { fog: FogState }) {
   );
 }
 
+type ClipCtx = {
+  beginPath: () => void;
+  rect: (x: number, y: number, w: number, h: number) => void;
+  moveTo: (x: number, y: number) => void;
+  lineTo: (x: number, y: number) => void;
+  closePath: () => void;
+  clip: (fillRule?: CanvasFillRule) => void;
+};
+
+function appendPolygonRing(ctx: ClipCtx, ring: Point[]) {
+  if (ring.length < 3) return;
+  ctx.moveTo(ring[0]!.x, ring[0]!.y);
+  for (let i = 1; i < ring.length; i++) ctx.lineTo(ring[i]!.x, ring[i]!.y);
+  ctx.closePath();
+}
+
+/** Clip full-grid fog to everywhere except revealed holes (works with pattern fills). */
+function fullGridFogClipFunc(bounds: WorldBounds, revealed: FogPolygon[]) {
+  return (ctx: ClipCtx) => {
+    const w = bounds.maxX - bounds.minX;
+    const h = bounds.maxY - bounds.minY;
+    ctx.beginPath();
+    ctx.rect(bounds.minX, bounds.minY, w, h);
+    for (const p of revealed) {
+      const outer = getRings(p)[0] ?? [];
+      if (outer.length === 2) {
+        const rect = polygonToRect(outer);
+        if (rect) ctx.rect(rect.x, rect.y, rect.w, rect.h);
+        continue;
+      }
+      appendPolygonRing(ctx, outer);
+    }
+    ctx.clip('evenodd');
+  };
+}
+
+const FOG_FILL = '#0f172a';
+
+function gmFogGroupOpacity(opaqueHiddenFog: boolean, defaultHidden: boolean): number {
+  if (opaqueHiddenFog) return 1;
+  return defaultHidden ? 0.4 : 0.72;
+}
+
 function useLoadedImage(src: string): HTMLImageElement | null {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   useEffect(() => {
     const im = new Image();
-    im.crossOrigin = 'anonymous';
     im.onload = () => setImg(im);
     im.onerror = () => setImg(null);
     im.src = src;
@@ -221,81 +366,97 @@ function useLoadedImage(src: string): HTMLImageElement | null {
   return img;
 }
 
-function FogNoiseOverlay({
-  opacity,
-}: {
-  opacity: number;
-}) {
-  const base = import.meta.env.BASE_URL;
-  const src = `${base}textures/fog-noise.png`;
-  const img = useLoadedImage(src);
+const FOG_NOISE_SRC = `${import.meta.env.BASE_URL}textures/fog-noise.png`;
+const FIXED_FOG_PATTERN_ORIGIN: Point = { x: 0, y: 0 };
+const FIXED_FOG_DRIFT: Point = { x: 0, y: 0 };
 
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-
-  useEffect(() => {
-    // Slow drift; update infrequently to keep overhead low.
-    const id = window.setInterval(() => {
-      setOffset((o) => ({
-        x: (o.x + 0.55) % 512,
-        y: (o.y + 0.25) % 512,
-      }));
-    }, 50);
-    return () => window.clearInterval(id);
-  }, []);
-
-  if (!img) return null;
-
-  // Huge rect; masked by source-atop where fog pixels already exist.
-  const extent = 120000;
-  return (
-    <Group globalCompositeOperation="source-atop" listening={false}>
-      <Rect
-        x={-extent}
-        y={-extent}
-        width={extent * 2}
-        height={extent * 2}
-        listening={false}
-        opacity={opacity}
-        fillPatternImage={img}
-        fillPatternRepeat="repeat"
-        fillPatternScale={{ x: 1.25, y: 1.25 }}
-        fillPatternOffset={offset}
-      />
-    </Group>
-  );
-}
-
-export function FogLayer({ fog, fogPreview }: Props) {
+export function FogLayer({
+  fog,
+  fogPreview,
+  gridOffset,
+  renderAsPlayer = false,
+  fixedFogPattern = false,
+}: Props) {
   const role = useStore((s) => s.role);
   const playerView = useStore((s) => s.playerView);
   const fogOpaquePreview = useStore((s) => s.fogOpaquePreview);
   const fogMode = useStore((s) => s.fogMode);
-  const asPlayer = seesAsPlayer(role, playerView);
+  const asPlayer = renderAsPlayer || seesAsPlayer(role, playerView);
+  const noiseImage = useLoadedImage(FOG_NOISE_SRC);
+  const [animatedDrift, setAnimatedDrift] = useState({ x: 0, y: 0 });
+
+  useEffect(() => {
+    if (fixedFogPattern) return;
+    const id = window.setInterval(() => {
+      setAnimatedDrift((o) => ({
+        x: (o.x + 0.55) % FOG_TEXTURE_SIZE,
+        y: (o.y + 0.25) % FOG_TEXTURE_SIZE,
+      }));
+    }, 50);
+    return () => window.clearInterval(id);
+  }, [fixedFogPattern]);
+
+  const drift = fixedFogPattern ? FIXED_FOG_DRIFT : animatedDrift;
+  const patternWorldOrigin = fixedFogPattern ? FIXED_FOG_PATTERN_ORIGIN : gridOffset;
+
+  const fogShapeProps = useMemo(
+    () => ({
+      noiseImage,
+      drift,
+      patternWorldOrigin: fixedFogPattern ? FIXED_FOG_PATTERN_ORIGIN : undefined,
+    }),
+    [noiseImage, drift, fixedFogPattern],
+  );
+
+  const fullGridBounds = useMemo(
+    () => (fog.defaultHidden ? fullGridFogBounds(gridOffset) : null),
+    [fog.defaultHidden, gridOffset],
+  );
+
+  const positiveFogMask = fog.defaultHidden ? [] : fog.unexploredMask;
+
+  const fullGridClipFunc = useMemo(() => {
+    if (!fullGridBounds) return null;
+    return fullGridFogClipFunc(fullGridBounds, fog.revealedMask);
+  }, [fullGridBounds, fog.revealedMask]);
+
+  const renderFogBody = (shapeListening: boolean) => (
+    <>
+      {fullGridBounds && fullGridClipFunc && (
+        <Group clipFunc={fullGridClipFunc} listening={false}>
+          <FullGridFogBackdrop
+            bounds={fullGridBounds}
+            fill={FOG_FILL}
+            noiseImage={noiseImage}
+            drift={drift}
+            worldOrigin={patternWorldOrigin}
+          />
+        </Group>
+      )}
+      {positiveFogMask.map((p) => (
+        <FogShape
+          key={p.id}
+          polygon={p}
+          fill={FOG_FILL}
+          listening={shapeListening}
+          {...fogShapeProps}
+        />
+      ))}
+      {!fog.defaultHidden && <RevealCutouts fog={fog} />}
+    </>
+  );
 
   if (isFogFullyClear(fog) && !fogPreview) {
     return null;
   }
 
   const opaqueHiddenFog = asPlayer || fogOpaquePreview;
-  const noiseOpacity = useMemo(() => {
-    // Keep it subtle; slightly reduced when GM can see through fog.
-    if (opaqueHiddenFog) return 0.1;
-    return fog.defaultHidden ? 0.07 : 0.09;
-  }, [opaqueHiddenFog, fog.defaultHidden]);
-  const gmHiddenFill = opaqueHiddenFog
-    ? 'rgba(15,23,42,1)'
-    : fog.defaultHidden
-      ? 'rgba(15,23,42,0.40)'
-      : 'rgba(15,23,42,0.72)';
+  const fogGroupOpacity = gmFogGroupOpacity(opaqueHiddenFog, fog.defaultHidden);
 
   if (!asPlayer) {
     return (
       <Group listening={false}>
-        {fog.unexploredMask.map((p) => (
-          <FogShape key={p.id} polygon={p} fill={gmHiddenFill} />
-        ))}
-        <RevealCutouts fog={fog} />
-        <FogNoiseOverlay opacity={noiseOpacity} />
+        <Group opacity={fogGroupOpacity}>{renderFogBody(false)}</Group>
         {fogPreview && (
           <>
             {fogPreview.kind === 'stroke' && (
@@ -318,11 +479,7 @@ export function FogLayer({ fog, fogPreview }: Props) {
 
   return (
     <Group listening={false}>
-      {fog.unexploredMask.map((p) => (
-        <FogShape key={p.id} polygon={p} fill="rgba(15,23,42,1)" listening />
-      ))}
-      <RevealCutouts fog={fog} />
-      <FogNoiseOverlay opacity={noiseOpacity} />
+      <Group opacity={fogGroupOpacity}>{renderFogBody(true)}</Group>
     </Group>
   );
 }

@@ -39,6 +39,14 @@ export function measureKindForKey(key: string, code: string): MeasureKind | null
   return idx == null ? null : (MEASURE_KIND_ORDER[idx] ?? null);
 }
 
+export function isMeasurePinToggleKey(key: string): boolean {
+  return key === 'Shift';
+}
+
+export function isShiftKey(key: string): boolean {
+  return key === 'Shift';
+}
+
 export function drawShapeForKey(key: string, code: string): DrawToolShape | null {
   const idx = digitIndex6(key, code);
   return idx == null ? null : (DRAW_SHAPE_ORDER[idx] ?? null);

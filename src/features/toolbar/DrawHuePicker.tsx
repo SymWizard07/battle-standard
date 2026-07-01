@@ -111,10 +111,19 @@ export function DrawHuePicker({
   hue,
   onChange,
   variant = 'button',
+  fillCell = false,
+  toolOption = false,
+  label = 'Hue',
 }: {
   hue: number;
   onChange: (hue: number) => void;
   variant?: Variant;
+  /** Stretch to fill a tool-option cell (swatch variant). */
+  fillCell?: boolean;
+  /** Match ToolOptionButton layout: swatch above label. */
+  toolOption?: boolean;
+  /** Label below swatch in toolOption mode, or beside swatch in session row. */
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
@@ -172,7 +181,11 @@ export function DrawHuePicker({
 
   const triggerClass =
     variant === 'swatch'
-      ? `flex ${toolBarControl} w-11 cursor-pointer items-center justify-center rounded-lg border border-slate-600 bg-slate-800 hover:bg-slate-700`
+      ? toolOption
+        ? 'flex cursor-pointer flex-col items-center justify-center gap-1 bg-transparent'
+        : fillCell
+          ? 'flex h-full w-full min-w-0 flex-1 cursor-pointer items-center justify-center rounded-none bg-transparent hover:bg-slate-800'
+          : `flex ${toolBarControl} w-11 cursor-pointer items-center justify-center rounded-lg border border-slate-600 bg-slate-800 hover:bg-slate-700`
       : `${toolBarBtnIcon} cursor-pointer bg-slate-800 text-slate-200 hover:bg-slate-700`;
 
   const popover =
@@ -189,6 +202,58 @@ export function DrawHuePicker({
       document.body,
     );
 
+  const swatch = (
+    <span
+      className={
+        variant === 'swatch'
+          ? 'h-5 w-5 rounded-full border border-slate-500'
+          : 'h-5 w-5 shrink-0 rounded-full border border-slate-600'
+      }
+      style={{ backgroundColor: color }}
+      aria-hidden
+    />
+  );
+
+  if (toolOption) {
+    return (
+      <>
+        <button
+          ref={triggerRef}
+          type="button"
+          className="box-border flex h-full w-full min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg border border-slate-700/80 bg-slate-800/30 px-1 py-1 text-[10px] font-medium text-slate-300 transition-colors hover:bg-slate-800"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          aria-label={`${label}: ${color}`}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {swatch}
+          <span className="leading-tight">{label}</span>
+        </button>
+        {popover}
+      </>
+    );
+  }
+
+  if (variant === 'swatch') {
+    return (
+      <>
+        <button
+          ref={triggerRef}
+          type="button"
+          className={`flex ${toolBarControl} h-full w-full min-w-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-slate-700/80 bg-slate-800 px-2 hover:bg-slate-700`}
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          aria-label={`${label}: ${color}`}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {swatch}
+          <span className="text-[10px] font-medium leading-tight text-slate-400">{label}</span>
+        </button>
+        {popover}
+      </>
+    );
+  }
+
   return (
     <>
       <button
@@ -197,19 +262,11 @@ export function DrawHuePicker({
         className={triggerClass}
         aria-expanded={open}
         aria-haspopup="dialog"
-        aria-label={variant === 'swatch' ? `Your color: ${color}` : 'Choose draw hue'}
+        aria-label="Choose draw hue"
         onClick={() => setOpen((v) => !v)}
       >
-        <span
-          className={
-            variant === 'swatch'
-              ? 'h-5 w-5 rounded-full border border-slate-500'
-              : 'h-5 w-5 shrink-0 rounded-full border border-slate-600'
-          }
-          style={{ backgroundColor: color }}
-          aria-hidden
-        />
-        {variant === 'button' && 'Hue'}
+        {swatch}
+        {label}
       </button>
       {popover}
     </>

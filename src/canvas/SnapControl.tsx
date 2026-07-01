@@ -1,14 +1,16 @@
 import type { MouseEvent, PointerEvent, TouchEvent } from 'react';
-import {
-  GRID_SNAP_STEP,
-  quantizeGridSnapStrength,
-  showsGridSnapControl,
-} from '../lib/gridSnap';
+import { GRID_SNAP_CYCLE, showsGridSnapControl } from '../lib/gridSnap';
 import { seesAsPlayer, useStore } from '../store/useStore';
 
 function stopBubble(e: MouseEvent | PointerEvent | TouchEvent) {
   e.stopPropagation();
 }
+
+const SNAP_LABELS: Record<(typeof GRID_SNAP_CYCLE)[number], string> = {
+  0: 'Off',
+  0.5: 'Half',
+  1: 'Full',
+};
 
 export function SnapControl() {
   const activeTool = useStore((s) => s.activeTool);
@@ -29,24 +31,26 @@ export function SnapControl() {
       onMouseDown={stopBubble}
       onTouchStart={stopBubble}
     >
-      <span className="text-[10px] font-medium text-slate-500">
-        {scaling ? 'drag corner handles · click map to finish' : 'press spacebar to cycle'}
-      </span>
-      <div className="flex items-center gap-2">
+      <span className="text-[10px] font-medium text-slate-500">press spacebar to cycle</span>
+      <div className="flex items-center gap-1.5">
         <span className="text-xs font-medium text-slate-400">Snap</span>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={GRID_SNAP_STEP}
-          value={selectSnap}
-          onChange={(e) => {
-            setSelectSnap(quantizeGridSnapStrength(Number(e.target.value)));
-          }}
-          className="w-24 accent-sky-400"
-          aria-label="Grid snap strength"
-        />
-        <span className="w-7 text-xs tabular-nums text-slate-300">{selectSnap.toFixed(1)}</span>
+        <div className="flex overflow-hidden rounded-md border border-slate-600">
+          {GRID_SNAP_CYCLE.map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setSelectSnap(value)}
+              title={`Snap ${SNAP_LABELS[value]} (${value})`}
+              className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                Math.abs(selectSnap - value) < 0.01
+                  ? 'bg-sky-600 text-white'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              {SNAP_LABELS[value]}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

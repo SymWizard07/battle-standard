@@ -3,38 +3,75 @@ import type { SceneId } from './types';
 const FADE_STEP = 0.08;
 const FADE_INTERVAL_MS = 32;
 
-const timers = new Map<string, ReturnType<typeof setInterval>>();
-
-type FadeCallbacks = {
-  onOpacity: (id: string, opacity: number | null) => void;
-  onRemove: (sceneId: SceneId, id: string) => void;
+type FadeEngine = {
+  onOpacity: (updates: Record<string, number | null>) => void;
+  onRemove: (sceneId: SceneId, ids: string[]) => void;
 };
 
-export function startMeasurementFade(
-  sceneId: SceneId,
-  id: string,
-  callbacks: FadeCallbacks,
-): void {
-  if (timers.has(id)) return;
+let engine: FadeEngine | null = null;
 
-  let op = 1;
-  const timer = setInterval(() => {
-    op -= FADE_STEP;
-    if (op <= 0) {
-      clearInterval(timer);
-      timers.delete(id);
-      callbacks.onOpacity(id, null);
-      callbacks.onRemove(sceneId, id);
-      return;
+const fading = new Map<string, { sceneId: SceneId; opacity: number }>();
+let ticker: ReturnType<typeof setInterval> | null = null;
+
+export function setMeasurementFadeEngine(next: FadeEngine): void {
+  engine = next;
+}
+
+function stopTickerIfEmpty(): void {
+  if (fading.size === 0 && ticker) {
+    clearInterval(ticker);
+    ticker = null;
+  }
+}
+
+function tick(): void {
+  if (!engine || fading.size === 0) {
+    stopTickerIfEmpty();
+    return;
+  }
+
+  const updates: Record<string, number | null> = {};
+  const removesByScene = new Map<SceneId, string[]>();
+
+  for (const [id, entry] of fading.entries()) {
+    const next = entry.opacity - FADE_STEP;
+    if (next <= 0) {
+      updates[id] = null;
+      fading.delete(id);
+      const list = removesByScene.get(entry.sceneId) ?? [];
+      list.push(id);
+      removesByScene.set(entry.sceneId, list);
+    } else {
+      entry.opacity = next;
+      updates[id] = next;
     }
-    callbacks.onOpacity(id, op);
-  }, FADE_INTERVAL_MS);
-  timers.set(id, timer);
+  }
+
+  if (Object.keys(updates).length > 0) {
+    engine.onOpacity(updates);
+  }
+  for (const [sceneId, ids] of removesByScene) {
+    if (ids.length > 0) engine.onRemove(sceneId, ids);
+  }
+
+  stopTickerIfEmpty();
+}
+
+function ensureTicker(): void {
+  if (ticker) return;
+  ticker = setInterval(tick, FADE_INTERVAL_MS);
+}
+
+export function startMeasurementFade(sceneId: SceneId, id: string): void {
+  if (fading.has(id)) return;
+  fading.set(id, { sceneId, opacity: 1 });
+  ensureTicker();
 }
 
 export function clearAllMeasurementFadeTimers(): void {
-  for (const timer of timers.values()) {
-    clearInterval(timer);
+  fading.clear();
+  if (ticker) {
+    clearInterval(ticker);
+    ticker = null;
   }
-  timers.clear();
 }

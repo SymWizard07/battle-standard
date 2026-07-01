@@ -7,13 +7,13 @@ export interface ToolbarToolDef {
 }
 
 export const TOOLBAR_TOOLS: ToolbarToolDef[] = [
-  { id: 'pan', label: 'Pan', hotkey: 'H' },
-  { id: 'select', label: 'Select', hotkey: 'S' },
+  { id: 'pan', label: 'Pan', hotkey: 'Q' },
+  { id: 'select', label: 'Select', hotkey: 'W' },
   { id: 'sceneEdit', label: 'Scene', hotkey: 'E' },
-  { id: 'fog', label: 'Fog', hotkey: 'F' },
-  { id: 'measure', label: 'Measure', hotkey: 'R' },
-  { id: 'draw', label: 'Draw', hotkey: 'D' },
-  { id: 'players', label: 'Players', hotkey: 'P' },
+  { id: 'fog', label: 'Fog', hotkey: 'R' },
+  { id: 'measure', label: 'Measure', hotkey: 'T' },
+  { id: 'draw', label: 'Draw', hotkey: 'Y' },
+  { id: 'players', label: 'Players', hotkey: 'U' },
 ];
 
 const HOTKEY_TO_TOOL = new Map(

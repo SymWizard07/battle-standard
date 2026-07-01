@@ -1,10 +1,9 @@
-import polygonClipping from 'polygon-clipping';
 import { DEFAULT_GRID_OFFSET } from './fixedGrid';
 import { GRID_SIZE_PX } from './fixedGrid';
 import { tokenWorldTopLeft } from './grid';
 import type { FogState, Point, Scene, TokenGridPlacement } from './types';
 import { isFogFullyClear } from './fog';
-import { allMapsFootprintMulti, fogToMulti } from './fullMapFog';
+import { fogToMulti } from './fullMapFog';
 
 type Pair = [number, number];
 type Ring = Pair[];
@@ -40,35 +39,21 @@ function pointInMultiPolygon(point: Point, mp: MultiPolygon): boolean {
   return false;
 }
 
-function playerHiddenFogMulti(fog: FogState, scene: Scene | null): MultiPolygon {
-  let hiddenMp = fogToMulti(fog.unexploredMask);
-  if (fog.defaultHidden && scene) {
-    const mapsMp = allMapsFootprintMulti(scene);
-    if (mapsMp.length > 0) {
-      hiddenMp =
-        hiddenMp.length === 0
-          ? mapsMp
-          : (polygonClipping.union(hiddenMp, mapsMp) as MultiPolygon);
-    }
-  }
-  return hiddenMp;
-}
-
 /** True when a player (or GM player-view preview) should not interact with map content at this point. */
 export function isWorldPointHiddenFromPlayer(
   world: Point,
   fog: FogState,
-  scene: Scene | null,
+  _scene: Scene | null,
 ): boolean {
   if (isFogFullyClear(fog)) return false;
 
-  const hiddenMp = playerHiddenFogMulti(fog, scene);
-  if (!pointInMultiPolygon(world, hiddenMp)) return false;
-
   const revealedMp = fogToMulti(fog.revealedMask);
-  if (revealedMp.length === 0) return true;
+  if (revealedMp.length > 0 && pointInMultiPolygon(world, revealedMp)) return false;
 
-  return !pointInMultiPolygon(world, revealedMp);
+  if (fog.defaultHidden) return true;
+
+  const hiddenMp = fogToMulti(fog.unexploredMask);
+  return pointInMultiPolygon(world, hiddenMp);
 }
 
 export function isTokenPlacementHiddenFromPlayer(

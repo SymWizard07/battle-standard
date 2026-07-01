@@ -1,49 +1,34 @@
 import { DEFAULT_GRID_OFFSET } from './fixedGrid';
+import { assignMissingMapParents } from './mapObjectParent';
 import { mapLocalToWorld, worldToMapLocal } from './mapGeometry';
-import { migrateObjectMapParents } from './mapObjectParent';
-import { newId } from './ids';
 import type { MapTransform, Point, Scene, SceneMapLayer } from './types';
 import { DEFAULT_MAP_TRANSFORM } from './types';
 
-export function migrateSceneMapLayers(scene: Scene): Scene {
-  if (Array.isArray(scene.maps)) {
-    return {
-      ...scene,
-      maps: scene.maps.map((m) => ({
-        ...m,
-        transform: m.transform ?? DEFAULT_MAP_TRANSFORM,
-      })),
-      gridOffset: scene.gridOffset ?? DEFAULT_GRID_OFFSET,
-    };
-  }
-
-  const legacy = scene as Scene & { mapAssetId?: string; mapTransform?: MapTransform };
-  if (legacy.mapAssetId) {
-    return {
-      ...scene,
-      maps: [
-        {
-          id: newId(),
-          assetId: legacy.mapAssetId,
-          transform: legacy.mapTransform ?? DEFAULT_MAP_TRANSFORM,
-        },
-      ],
-      mapAssetId: undefined,
-      mapTransform: undefined,
-      gridOffset: scene.gridOffset ?? DEFAULT_GRID_OFFSET,
-    };
-  }
-
-  return { ...scene, maps: [], gridOffset: scene.gridOffset ?? DEFAULT_GRID_OFFSET };
+/** Ensure current-schema defaults on a scene (no old-format upgrades). */
+export function normalizeScene(scene: Scene): Scene {
+  const maps = (scene.maps ?? []).map((m) => ({
+    ...m,
+    transform: m.transform ?? DEFAULT_MAP_TRANSFORM,
+  }));
+  return assignMissingMapParents({
+    ...scene,
+    maps,
+    gridOffset: scene.gridOffset ?? DEFAULT_GRID_OFFSET,
+    measurements: scene.measurements ?? [],
+    drawStrokes: scene.drawStrokes ?? [],
+  });
 }
 
-/** Full scene migration including map layers and object map parents. */
-export function migrateSceneMaps(scene: Scene): Scene {
-  return migrateObjectMapParents(migrateSceneMapLayers(scene));
+/** Map stack for hit tests without assigning object parents (safe during assignMissingMapParents). */
+export function sceneMapsForHitTest(scene: Scene): SceneMapLayer[] {
+  return (scene.maps ?? []).map((m) => ({
+    ...m,
+    transform: m.transform ?? DEFAULT_MAP_TRANSFORM,
+  }));
 }
 
 export function sceneMaps(scene: Scene): SceneMapLayer[] {
-  return migrateSceneMapLayers(scene).maps;
+  return normalizeScene(scene).maps;
 }
 
 export function mapLayerSize(layer: SceneMapLayer): { width: number; height: number } {

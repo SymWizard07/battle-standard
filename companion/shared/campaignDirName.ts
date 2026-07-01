@@ -17,15 +17,13 @@ export function campaignFolderName(campaign: { id: string; name: string }): stri
   return `${sanitizeCampaignName(campaign.name)}--${campaign.id}`;
 }
 
-/** Parse campaign id from a folder name; legacy folders used the raw id only. */
+/** Parse campaign id from a folder name (`Name--id` suffix). */
 export function campaignIdFromFolderName(folderName: string): string {
   const idx = folderName.lastIndexOf('--');
   if (idx === -1) return folderName;
-  const id = folderName.slice(idx + 2);
-  return id || folderName;
+  return folderName.slice(idx + 2) || folderName;
 }
 
 export function folderNameMatchesCampaignId(folderName: string, campaignId: string): boolean {
-  if (folderName === campaignId) return true;
   return folderName.endsWith(`--${campaignId}`);
 }

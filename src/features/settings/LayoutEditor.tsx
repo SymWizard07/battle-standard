@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LAYOUT_MODULE_DRAG_TYPE } from '../layout/LayoutModuleContext';
 import { useLayoutStore } from '../layout/layoutStore';
 import {
@@ -29,10 +29,12 @@ import {
   decodeCollapseDrag,
   encodeCollapseDrag,
   LAYOUT_COLLAPSE_DRAG_TYPE,
+  resolveCollapseAssignmentPath,
   setPanelCollapseAtPath,
+  getPanelCollapse,
 } from '../layout/layoutPanelChrome';
 import type { CollapseDirection, DeviceClass, LayoutNode, ModuleId } from '../layout/schema/layoutSchema';
-import { MODULE_IDS, MODULE_LABELS } from '../layout/schema/layoutSchema';
+import { MODULE_IDS, MODULE_LABELS, validateLayoutProfiles } from '../layout/schema/layoutSchema';
 import { attachPaletteDragImage } from './layoutDragGhost';
 import { LayoutEditorZones } from './LayoutEditorZones';
 import { LayoutPreviewViewport } from './LayoutPreviewViewport';
@@ -144,6 +146,11 @@ export function LayoutEditor({ onDragActivityChange }: LayoutEditorProps) {
   const editorTree = editorDraft?.[editorDevice] ?? layoutProfiles[editorDevice];
   draftTreeRef.current = editorTree;
 
+  const layoutValidationError = useMemo(
+    () => (editorDraft ? validateLayoutProfiles(editorDraft) : null),
+    [editorDraft],
+  );
+
   const clearDrag = useCallback(() => {
     activeDragRef.current = null;
     dragHoverRef.current = null;
@@ -216,8 +223,13 @@ export function LayoutEditor({ onDragActivityChange }: LayoutEditorProps) {
         case 'collapse-palette': {
           if (edge) break;
           const target = getNodeAtPath(tree, targetPath);
-          if (target?.type === 'module' || target?.type === 'tabs') {
-            next = setPanelCollapseAtPath(tree, targetPath, drag.direction);
+          if (
+            target?.type === 'module' ||
+            target?.type === 'tabs' ||
+            target?.type === 'split'
+          ) {
+            const assignPath = resolveCollapseAssignmentPath(tree, targetPath);
+            next = setPanelCollapseAtPath(tree, assignPath, drag.direction);
           }
           break;
         }
@@ -347,10 +359,9 @@ export function LayoutEditor({ onDragActivityChange }: LayoutEditorProps) {
   const handleCollapseAttachedDragStart = (fromPath: number[]) => (e: React.DragEvent) => {
     e.stopPropagation();
     const node = getNodeAtPath(draftTreeRef.current ?? editorTree, fromPath);
+    const collapseDir = node ? getPanelCollapse(node) : undefined;
     const label =
-      node && (node.type === 'module' || node.type === 'tabs') && node.collapse
-        ? COLLAPSE_LABELS[node.collapse]
-        : 'Collapse';
+      node && collapseDir ? COLLAPSE_LABELS[collapseDir] : 'Collapse';
     attachPaletteDragImage(e, label);
     e.dataTransfer.setData(
       LAYOUT_COLLAPSE_DRAG_TYPE,
@@ -432,7 +443,7 @@ export function LayoutEditor({ onDragActivityChange }: LayoutEditorProps) {
   };
 
   const handleApply = () => {
-    applyEditorDraft();
+    if (!applyEditorDraft()) return;
     setLayoutEpoch((n) => n + 1);
     clearDrag();
   };
@@ -535,11 +546,16 @@ export function LayoutEditor({ onDragActivityChange }: LayoutEditorProps) {
           </button>
           <button
             type="button"
-            className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-medium text-white hover:bg-sky-500"
+            className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
             onClick={handleApply}
+            disabled={layoutValidationError != null}
+            title={layoutValidationError ?? undefined}
           >
             Apply layout
           </button>
+          {layoutValidationError && (
+            <p className="text-xs text-amber-400">{layoutValidationError}</p>
+          )}
         </div>
       </aside>
 

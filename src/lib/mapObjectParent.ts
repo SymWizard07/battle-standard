@@ -1,7 +1,7 @@
 import { DEFAULT_GRID_OFFSET, GRID_SIZE_PX } from './fixedGrid';
 import { posOffsetFromWorldTopLeft, tokenWorldTopLeft, worldToGridCell, worldToSubGridTopLeft } from './grid';
 import { mapLocalToWorld, transformWorldPointBetweenMaps, worldToMapLocal } from './mapGeometry';
-import { hitMapLayerAt, sceneMaps } from './sceneMaps';
+import { hitMapLayerAt, sceneMaps, sceneMapsForHitTest } from './sceneMaps';
 import {
   drawStrokeAnchorWorld,
   cubeCenterWorld,
@@ -44,7 +44,7 @@ export function resolveMapLayerForWorldPoint(
   world: Point,
   scene: Scene,
 ): string | undefined {
-  return hitMapLayerAt(world, sceneMaps(scene))?.id;
+  return hitMapLayerAt(world, sceneMapsForHitTest(scene))?.id;
 }
 
 function polygonCentroid(rings: Point[][]): Point | null {
@@ -248,8 +248,8 @@ export function assignDrawStrokeMapLayer(stroke: DrawStroke, scene: Scene): Draw
   return { ...stroke, mapLayerId: resolveMapLayerForWorldPoint(anchor, scene) };
 }
 
-/** Assign map parents for objects missing one (e.g. legacy scenes). */
-export function migrateObjectMapParents(scene: Scene): Scene {
+/** Assign map parents for objects missing one. */
+export function assignMissingMapParents(scene: Scene): Scene {
   let next = scene;
   next = {
     ...next,

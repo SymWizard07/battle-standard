@@ -1,4 +1,4 @@
-import { migrateSceneMaps } from '../sceneMaps';
+import { normalizeScene } from '../sceneMaps';
 import type {
   Campaign,
   DrawStroke,
@@ -54,7 +54,7 @@ export function getObjectSnapshot(
           return s ? structuredClone(s) : null;
         }
         case 'mapLayer': {
-          const migrated = migrateSceneMaps(scene);
+          const migrated = normalizeScene(scene);
           const layer = migrated.maps.find((m) => m.id === ref.id);
           return layer ? structuredClone(layer) : null;
         }
@@ -139,7 +139,7 @@ export function applyObjectSnapshot(
     case 'mapLayer':
       if (!ref.sceneId) return campaign;
       return updateSceneInCampaign(campaign, ref.sceneId, (scene) => {
-        const migrated = migrateSceneMaps(scene);
+        const migrated = normalizeScene(scene);
         const maps = migrated.maps;
         if (snapshot === null) {
           return { ...scene, maps: removeFromArray(maps, ref.id) };

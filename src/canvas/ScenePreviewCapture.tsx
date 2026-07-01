@@ -2,10 +2,12 @@ import type Konva from 'konva';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Group, Layer, Stage } from 'react-konva';
 import { computeMapBounds, fitBoundsToRect } from '../lib/sceneBounds';
+import { DEFAULT_GRID_OFFSET } from '../lib/fixedGrid';
 import { sceneMaps } from '../lib/sceneMaps';
 import { useActiveScene, useStore } from '../store/useStore';
 import { BackgroundLayer } from './layers/BackgroundLayer';
 import { DrawLayer } from './layers/DrawLayer';
+import { FogLayer } from './layers/FogLayer';
 import { MeasurementLayer } from './layers/MeasurementLayer';
 import { defaultPlayerColor } from '../lib/playerColor';
 import { TokenLayer } from './layers/TokenLayer';
@@ -43,11 +45,16 @@ export function ScenePreviewCapture() {
     }
   }, [activeSceneId, setScenePreviewUrl]);
 
+  const gridOffset = scene?.gridOffset ?? DEFAULT_GRID_OFFSET;
+  const fogKey = scene
+    ? `${scene.fog.defaultHidden}:${scene.fog.unexploredMask.length}:${scene.fog.revealedMask.length}`
+    : '';
+
   useEffect(() => {
     if (!scene) return;
     const t = window.setTimeout(capture, 400);
     return () => window.clearTimeout(t);
-  }, [scene, capture]);
+  }, [scene, fogKey, capture]);
 
   useEffect(() => {
     if (!scene) return;
@@ -83,6 +90,13 @@ export function ScenePreviewCapture() {
               scalePreviewById={null}
               onTokenTap={() => {}}
               onTokenHover={() => {}}
+            />
+            <FogLayer
+              fog={scene.fog}
+              fogPreview={null}
+              gridOffset={gridOffset}
+              renderAsPlayer
+              fixedFogPattern
             />
             <MeasurementLayer
               measurements={scene.measurements}

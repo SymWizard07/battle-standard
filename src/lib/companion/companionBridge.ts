@@ -16,7 +16,6 @@ import {
   loadCampaign,
   loadCampaignAssets,
   loadTokenLibraryLayout,
-  type DiskImportMode,
 } from '../db';
 import { referencedAssetIds } from '../campaignAssets';
 import { companionAssetsToStored, storedAssetToCompanionPayload } from './companionAssets';
@@ -284,16 +283,12 @@ export async function listCampaignsViaCompanion(): Promise<string[]> {
   return response.campaignIds;
 }
 
-export async function importCampaignFromCompanion(
-  campaignId: string,
-  mode: DiskImportMode = 'merge',
-): Promise<boolean> {
+export async function importCampaignFromCompanion(campaignId: string): Promise<boolean> {
   const bundle = await loadCampaignViaCompanion(campaignId);
   if (!bundle) return false;
   return importCampaignBundleFromDisk(
     bundle.campaign,
     companionAssetsToStored(bundle.assets, bundle.campaign.id),
-    mode,
   );
 }
 
@@ -308,9 +303,7 @@ export async function importGlobalFromCompanion(): Promise<boolean> {
   return true;
 }
 
-export async function syncFromCompanion(
-  mode: DiskImportMode = 'merge',
-): Promise<{ imported: number; error?: string }> {
+export async function syncFromCompanion(): Promise<{ imported: number; error?: string }> {
   try {
     let imported = 0;
     try {
@@ -321,7 +314,7 @@ export async function syncFromCompanion(
 
     const ids = await listCampaignsViaCompanion();
     for (const id of ids) {
-      const ok = await importCampaignFromCompanion(id, mode);
+      const ok = await importCampaignFromCompanion(id);
       if (ok) imported += 1;
     }
     return { imported };

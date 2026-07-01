@@ -208,10 +208,6 @@ export interface Scene {
   id: SceneId;
   name: string;
   maps: SceneMapLayer[];
-  /** @deprecated Migrated into `maps`. */
-  mapAssetId?: AssetId;
-  /** @deprecated Migrated into `maps`. */
-  mapTransform?: MapTransform;
   tokens: Token[];
   fog: FogState;
   measurements: MeasurementObject[];

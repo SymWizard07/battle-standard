@@ -1,4 +1,3 @@
-import type { DiskImportMode } from '../db';
 import type { StableStorageStatus } from '../stableStorage';
 import { syncFromDisk } from '../stableStorage/diskIO';
 import {
@@ -40,8 +39,8 @@ type MirrorDeps = {
 let mirrorDeps: MirrorDeps | null = null;
 
 type SyncDeps = {
-  fromCompanion: (mode: DiskImportMode) => Promise<{ imported: number; error?: string }>;
-  fromFs: (mode: DiskImportMode) => Promise<{ imported: number; error?: string }>;
+  fromCompanion: () => Promise<{ imported: number; error?: string }>;
+  fromFs: () => Promise<{ imported: number; error?: string }>;
 };
 
 let syncDeps: SyncDeps | null = null;
@@ -152,20 +151,14 @@ export async function getUnifiedStorageStatus(): Promise<UnifiedStorageStatus> {
   };
 }
 
-export type { DiskImportMode } from '../db';
-
-/** Disk import: merge keeps newer IndexedDB data; authoritative always applies disk. */
-export async function preferSyncFromDisk(options?: {
-  mode?: DiskImportMode;
-}): Promise<{
+/** Import all campaigns and global data from disk into IndexedDB. */
+export async function preferSyncFromDisk(): Promise<{
   imported: number;
   error?: string;
   source?: StorageBackend;
 }> {
-  const mode = options?.mode ?? 'merge';
-
   if (await checkCompanionReady()) {
-    const result = await getSyncDeps().fromCompanion(mode);
+    const result = await getSyncDeps().fromCompanion();
     if (!result.error) {
       lastSyncedAt = Date.now();
       lastError = null;
@@ -175,7 +168,7 @@ export async function preferSyncFromDisk(options?: {
     // Companion failed — fall back to browser folder or IndexedDB-only.
   }
 
-  const result = await getSyncDeps().fromFs(mode);
+  const result = await getSyncDeps().fromFs();
   if (!result.error) {
     lastSyncedAt = Date.now();
     lastError = null;
@@ -195,12 +188,9 @@ export async function mirrorGlobalToCompanion(): Promise<void> {
   recordCompanionSyncSuccess();
 }
 
-export async function syncCampaignFromCompanionDisk(
-  campaignId: string,
-  mode: DiskImportMode = 'merge',
-): Promise<boolean> {
+export async function syncCampaignFromCompanionDisk(campaignId: string): Promise<boolean> {
   try {
-    const ok = await importCampaignFromCompanion(campaignId, mode);
+    const ok = await importCampaignFromCompanion(campaignId);
     if (ok) recordCompanionSyncSuccess();
     return ok;
   } catch (err) {
@@ -221,21 +211,16 @@ export async function syncGlobalFromCompanionDisk(): Promise<boolean> {
 }
 
 /** Import one campaign + global bundle from disk when available. */
-export async function preferSyncCampaignFromDisk(
-  campaignId: string,
-  options?: { mode?: DiskImportMode },
-): Promise<void> {
-  const mode = options?.mode ?? 'merge';
-
+export async function preferSyncCampaignFromDisk(campaignId: string): Promise<void> {
   if (await checkCompanionReady()) {
-    const campaignOk = await syncCampaignFromCompanionDisk(campaignId, mode);
+    const campaignOk = await syncCampaignFromCompanionDisk(campaignId);
     await syncGlobalFromCompanionDisk();
     if (campaignOk) return;
     // Companion could not import — try browser-linked folder.
   }
 
   const { syncCampaignFromDisk, syncGlobalFromDisk } = await import('../stableStorage/diskIO');
-  await syncCampaignFromDisk(campaignId, mode);
+  await syncCampaignFromDisk(campaignId);
   await syncGlobalFromDisk();
 }
 

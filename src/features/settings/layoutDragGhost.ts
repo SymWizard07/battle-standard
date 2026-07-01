@@ -51,3 +51,7 @@ export function previewBoxClass(options: {
   }
   return `${base} border-slate-500 bg-slate-900/80`;
 }
+
+export function previewSizeMatchPanelClass(active: boolean): string {
+  return active ? 'ring-2 ring-inset ring-amber-400 bg-amber-500/15' : '';
+}

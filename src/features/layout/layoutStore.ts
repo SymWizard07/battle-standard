@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import {
-  applyLegacyCollapse,
   createDefaultLayoutProfiles,
   defaultLayoutForDevice,
 } from './layoutDefaults';
@@ -13,20 +12,20 @@ import {
 } from './layoutTreeUtils';
 import type { CollapseDirection } from './schema/layoutSchema';
 import type { DeviceClass, LayoutNode, LayoutProfiles, ModuleId } from './schema/layoutSchema';
-import { cloneLayout, repairLayoutTree, validateLayout } from './schema/layoutSchema';
+import { cloneLayout, ensureSettingsModule, repairLayoutTree, validateLayout, validateLayoutProfiles } from './schema/layoutSchema';
 
 const STORAGE_KEY = 'ui.layout.v1';
 
 function loadLayoutProfiles(): LayoutProfiles {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return migrateFromLegacy();
+    if (!raw) return createDefaultLayoutProfiles();
     const parsed = JSON.parse(raw) as LayoutProfiles;
     if (parsed.desktop && parsed.tablet && parsed.mobile) {
       const profiles: LayoutProfiles = {
-        desktop: repairLayoutTree(cloneLayout(parsed.desktop)),
-        tablet: repairLayoutTree(cloneLayout(parsed.tablet)),
-        mobile: repairLayoutTree(cloneLayout(parsed.mobile)),
+        desktop: repairLayoutTree(ensureSettingsModule(cloneLayout(parsed.desktop))),
+        tablet: repairLayoutTree(ensureSettingsModule(cloneLayout(parsed.tablet))),
+        mobile: repairLayoutTree(ensureSettingsModule(cloneLayout(parsed.mobile))),
       };
       persistLayoutProfiles(profiles);
       return profiles;
@@ -34,22 +33,7 @@ function loadLayoutProfiles(): LayoutProfiles {
   } catch {
     /* use defaults */
   }
-  return migrateFromLegacy();
-}
-
-function migrateFromLegacy(): LayoutProfiles {
-  const defaults = createDefaultLayoutProfiles();
-  let leftCollapsed = false;
-  let rightCollapsed = false;
-  try {
-    leftCollapsed = localStorage.getItem('ui.leftCollapsed') === 'true';
-    rightCollapsed = localStorage.getItem('ui.rightCollapsed') === 'true';
-  } catch {
-    /* ignore */
-  }
-  defaults.desktop = applyLegacyCollapse(defaults.desktop, leftCollapsed, rightCollapsed);
-  persistLayoutProfiles(defaults);
-  return defaults;
+  return createDefaultLayoutProfiles();
 }
 
 function persistLayoutProfiles(profiles: LayoutProfiles): void {
@@ -57,15 +41,6 @@ function persistLayoutProfiles(profiles: LayoutProfiles): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
   } catch {
     /* ignore quota */
-  }
-}
-
-function clearLegacyCollapseFlags(): void {
-  try {
-    localStorage.removeItem('ui.leftCollapsed');
-    localStorage.removeItem('ui.rightCollapsed');
-  } catch {
-    /* ignore */
   }
 }
 
@@ -100,7 +75,7 @@ interface LayoutState {
   beginLayoutEdit: (device: DeviceClass) => void;
   updateEditorDraft: (device: DeviceClass, tree: LayoutNode) => void;
   setPanelCollapse: (device: DeviceClass, path: number[], collapse: CollapseDirection | undefined) => void;
-  applyEditorDraft: () => void;
+  applyEditorDraft: () => boolean;
   cancelEditorDraft: () => void;
   setEditorDevice: (device: DeviceClass) => void;
 }
@@ -179,7 +154,6 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   },
 
   resetLayoutProfile: (device) => {
-    clearLegacyCollapseFlags();
     const next = sanitizeProfile(defaultLayoutForDevice(device), device);
     const layoutProfiles = { ...get().layoutProfiles, [device]: next };
     persistLayoutProfiles(layoutProfiles);
@@ -238,7 +212,9 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
 
   applyEditorDraft: () => {
     const draft = get().editorDraft;
-    if (!draft) return;
+    if (!draft) return false;
+    const err = validateLayoutProfiles(draft);
+    if (err) return false;
     const layoutProfiles: LayoutProfiles = {
       desktop: sanitizeProfile(draft.desktop, 'desktop'),
       tablet: sanitizeProfile(draft.tablet, 'tablet'),
@@ -254,6 +230,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
         mobile: cloneLayout(layoutProfiles.mobile),
       },
     });
+    return true;
   },
 
   cancelEditorDraft: () => set({ editorDraft: null }),

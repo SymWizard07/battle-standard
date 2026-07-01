@@ -1,5 +1,5 @@
 import { DEFAULT_GRID_OFFSET, GRID_SIZE_PX } from './fixedGrid';
-import { migrateSceneMaps, mapLayerWorldCenter, sceneMaps } from './sceneMaps';
+import { normalizeScene, mapLayerWorldCenter, sceneMaps } from './sceneMaps';
 import { shiftDrawStroke } from './drawShapes';
 import type { MeasurementObject, Point, Scene } from './types';
 
@@ -136,12 +136,12 @@ export function recenterSceneGrid(scene: Scene): {
   delta: Point;
   newOffset: Point;
 } | null {
-  const migrated = migrateSceneMaps(scene);
-  const recenter = computeGridRecenter(migrated);
+  const normalized = normalizeScene(scene);
+  const recenter = computeGridRecenter(normalized);
   if (!recenter) return null;
   const { delta, newOffset } = recenter;
   return {
-    scene: shiftSceneForGridRecenter(migrated, delta, newOffset),
+    scene: shiftSceneForGridRecenter(normalized, delta, newOffset),
     delta,
     newOffset,
   };

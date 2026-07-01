@@ -11,8 +11,12 @@ import {
   isPointInCone5e,
   isPointInConeVtt,
   line5eIncludedCells,
+  measureDistanceCells,
+  measureDistanceWorld,
   sphere5eIncludedCells,
 } from './measure';
+import { measureParamsFromDrag } from './drawShapes';
+import { getMeasureLabelInfo } from './measureLabel';
 import { GRID_SIZE_PX } from './fixedGrid';
 import { gridCellToWorldCenter } from './grid';
 
@@ -34,6 +38,33 @@ assertEqual(distanceFt5e(origin, { col: 3, row: 3 }, cellFt, true), 20, 'alt 3 d
 assertEqual(distanceFt5e(origin, { col: 4, row: 4 }, cellFt, true), 30, 'alt 4 diagonals');
 assertEqual(distanceFt5e(origin, { col: 5, row: 2 }, cellFt, true), 30, 'alt 2 diag + 3 straight');
 
+assertEqual(measureDistanceCells(GRID_SIZE_PX * 1.4), 1, 'quantize cells rounds to whole cells');
+assertEqual(measureDistanceWorld(GRID_SIZE_PX * 1.4), GRID_SIZE_PX, 'quantize world to 5 ft');
+
+const halfCellDrag = measureParamsFromDrag(
+  'sphere',
+  { x: 0, y: 0 },
+  { x: GRID_SIZE_PX / 2, y: 0 },
+);
+assertEqual((halfCellDrag as { radiusWorld?: number }).radiusWorld ?? 0, GRID_SIZE_PX, 'sphere half-cell drag is 5 ft');
+const halfCellLabel = getMeasureLabelInfo('sphere', halfCellDrag, false);
+if (halfCellLabel?.text !== '5 ft') {
+  throw new Error(`sphere label should be 5 ft, got ${halfCellLabel?.text}`);
+}
+
+const coneDrag = measureParamsFromDrag(
+  'cone',
+  { x: 0, y: 0 },
+  { x: GRID_SIZE_PX * 1.6, y: 0 },
+);
+const coneParams = coneDrag as { lengthCells: number; lengthWorld?: number };
+assertEqual(coneParams.lengthCells, 2, 'cone quantizes to whole cells');
+assertEqual(coneParams.lengthWorld ?? 0, GRID_SIZE_PX * 2, 'cone length world matches cells');
+const coneLabel = getMeasureLabelInfo('cone', coneDrag, false);
+if (coneLabel?.text !== '10 ft') {
+  throw new Error(`cone label should be 10 ft, got ${coneLabel?.text}`);
+}
+
 const coneOrigin = { x: 0, y: GRID_SIZE_PX / 2 };
 assertEqual(
   cone5eIncludedCells(coneOrigin, 0, 3).length,
@@ -53,8 +84,22 @@ assertTrue(
   'corner cell in third row of 5e cone',
 );
 assertTrue(
-  !isPointInCone5e(gridCellToWorldCenter({ col: 0, row: 0 }), { x: 25, y: 25 }, 0, 3),
-  'caster cell excluded when origin is at its center',
+  isPointInCone5e(gridCellToWorldCenter({ col: 0, row: 0 }), { x: 25, y: 25 }, 0, 3),
+  'caster cell included when origin is at its center',
+);
+const edgeOriginEast = { x: 0, y: GRID_SIZE_PX / 2 };
+assertTrue(
+  !cone5eIncludedCells(edgeOriginEast, 0, 3).some((c) => c.col === -1 && c.row === 0),
+  'east cone from west edge excludes cell behind origin',
+);
+const edgeOriginWest = { x: GRID_SIZE_PX, y: GRID_SIZE_PX / 2 };
+assertTrue(
+  isPointInCone5e(gridCellToWorldCenter({ col: 0, row: 0 }), edgeOriginWest, Math.PI, 3),
+  'west cone from east edge includes forward origin cell',
+);
+assertTrue(
+  !cone5eIncludedCells(edgeOriginWest, Math.PI, 3).some((c) => c.col === 1 && c.row === 0),
+  'west cone from east edge excludes cell behind origin',
 );
 const outline = gridCellsUnionOutline(cone5eIncludedCells(coneOrigin, 0, 2));
 if (outline.length < 4) throw new Error('5e cone outline is closed polygon');

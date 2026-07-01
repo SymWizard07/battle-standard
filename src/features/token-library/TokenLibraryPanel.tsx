@@ -24,7 +24,6 @@ interface Props {
 
 export function TokenLibraryPanel({ variant, open, onClose }: Props) {
   const campaign = useStore((s) => s.campaign);
-  const rightCollapsed = useStore((s) => s.rightCollapsed);
   const registerAssetUrl = useStore((s) => s.registerAssetUrl);
   const assetUrls = useStore((s) => s.assetUrls);
   const globalTokenLibraryLayout = useStore((s) => s.globalTokenLibraryLayout);
@@ -185,8 +184,7 @@ export function TokenLibraryPanel({ variant, open, onClose }: Props) {
         </header>
       )}
 
-      {(variant === 'inline' || variant === 'module' || !rightCollapsed) && (
-        <>
+      <>
           <div className="flex border-b border-slate-700">
             <button
               type="button"
@@ -265,13 +263,11 @@ export function TokenLibraryPanel({ variant, open, onClose }: Props) {
               </button>
             </div>
           </footer>
-        </>
-      )}
+      </>
     </div>
   );
 
   if (variant === 'sidebar') {
-    if (rightCollapsed) return null;
     return (
       <aside className="hidden h-full w-72 shrink-0 border-l border-slate-700 md:flex md:flex-col">
         {panel}

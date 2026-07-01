@@ -12,11 +12,9 @@ import {
 } from '../lib/grid';
 import {
   GRID_SNAP_KEYBOARD_TOOLS,
-  GRID_SNAP_STEP,
   gridSnapStrokeMinStep,
   moveTokenPlacementByWorldDelta,
   nextGridSnapCycleValue,
-  quantizeGridSnapStrength,
   snapScreenPointWithStrength,
   snapScreenToGridCell,
 } from '../lib/gridSnap';
@@ -32,10 +30,9 @@ import { isWorldPointHiddenFromPlayer, isTokenPlacementHiddenFromPlayer } from '
 
 import { TokenScaleOverlay } from './TokenScaleOverlay';
 import { scrollLibraryNearPointer } from '../hooks/useLibraryDragScroll';
-import { fogShapeForKey, measureKindForKey, drawShapeForKey } from '../features/toolbar/toolShapeShortcuts';
+import { fogShapeForKey, measureKindForKey, drawShapeForKey, isMeasurePinToggleKey, isShiftKey } from '../features/toolbar/toolShapeShortcuts';
 import { isValidDrawPreview, isValidMeasurePreview, isTokenInMeasurement, measureParamsFromDrag, drawRectParamsFromDrag, drawCircleParamsFromDrag, resolveDrawColor, eraserRadiusWorld, drawStrokeIdsHitByEraser, hitDrawStrokeAt, shiftDrawStrokes, findDrawStrokesInScreenRect } from '../lib/drawShapes';
 import { DrawStrokeEditOverlay } from './DrawStrokeEditOverlay';
-import { SnapControl } from './SnapControl';
 import { colorFromHue, defaultPlayerColor } from '../lib/playerColor';
 import type { DrawPreview } from '../lib/types';
 import {
@@ -46,6 +43,11 @@ import {
 import { PeerDrawSelectionOverlay } from './PeerDrawSelectionOverlay';
 import { filterTokensForViewer } from '../lib/tokenVisibility';
 import { DEFAULT_GRID_OFFSET, getGridOffset, GRID_SIZE_PX, setGridOffset } from '../lib/fixedGrid';
+import {
+  allowDrawToolKeyboardShortcut,
+  drawStrokeWidthKeyboardDelta,
+  stepDrawStrokeWidth,
+} from '../lib/drawConstants';
 import { loadImageDimensions } from '../lib/mapAlign';
 import { mapLocalToWorld, worldToMapLocal } from '../lib/mapGeometry';
 import { newId } from '../lib/ids';
@@ -55,7 +57,9 @@ import { ConnectedDrawLayer } from './layers/DrawLayer';
 import { FogLayer } from './layers/FogLayer';
 import { GridLayer } from './layers/GridLayer';
 import { MeasurementLabelsLayer, MeasurementLayer } from './layers/MeasurementLayer';
+import { isDismissibleMeasureLabelHit } from './MeasureLabel';
 import { ConnectedTokenLayer } from './layers/TokenLayer';
+import { SnapControl } from './SnapControl';
 
 function snapWorldToGridCorner(world: Point): Point {
   const gridOffset = getGridOffset();
@@ -132,8 +136,6 @@ export function MapViewport() {
   const fogMode = useStore((s) => s.fogMode);
   const fogBrushCells = useStore((s) => s.fogBrushCells);
   const fogShape = useStore((s) => s.fogShape);
-  const measureKind = useStore((s) => s.measureKind);
-  const measurePinMode = useStore((s) => s.measurePinMode);
   const coneAngleDeg = useStore((s) => s.coneAngleDeg);
   const measureDisplayStyle = useStore((s) => s.measureDisplayStyle);
   const measureDebugDualView = useStore((s) => s.measureDebugDualView);
@@ -226,6 +228,10 @@ export function MapViewport() {
   const drawPath = useRef<Point[]>([]);
   const erasedStrokeIds = useRef<Set<string>>(new Set());
   const eraseLastWorld = useRef<Point | null>(null);
+  const canvasGesturePointerId = useRef<number | null>(null);
+  const canvasGestureFinishGuard = useRef(false);
+  const canvasGestureToolRef = useRef<'draw' | 'measure' | 'fog' | null>(null);
+  const finishCanvasGestureRef = useRef<(source: 'stage' | 'window' | 'container') => void>(() => {});
   const pointerCount = useRef(0);
   const confirmDeleteMapLayer = useCallback(
     async (layerId: string) => {
@@ -370,6 +376,49 @@ export function MapViewport() {
     if (!stage) return null;
     const pos = stage.getPointerPosition();
     return pos ? { x: pos.x, y: pos.y } : null;
+  }, []);
+
+  const syncPointerFromClientEvent = useCallback(
+    (e: MouseEvent | PointerEvent | TouchEvent): Point | null => {
+      const el = containerRef.current;
+      if (!el) return null;
+      let clientX: number | undefined;
+      let clientY: number | undefined;
+      if ('changedTouches' in e && e.changedTouches.length > 0) {
+        clientX = e.changedTouches[0]!.clientX;
+        clientY = e.changedTouches[0]!.clientY;
+      } else if ('clientX' in e) {
+        clientX = e.clientX;
+        clientY = e.clientY;
+      }
+      if (clientX == null || clientY == null) return null;
+      const rect = el.getBoundingClientRect();
+      const ptr = { x: clientX - rect.left, y: clientY - rect.top };
+      lastPointerScreen.current = ptr;
+      return ptr;
+    },
+    [],
+  );
+
+  const releaseCanvasPointerCapture = useCallback((pointerId: number | null) => {
+    const el = containerRef.current;
+    if (!el || pointerId == null) return;
+    try {
+      if (el.hasPointerCapture(pointerId)) {
+        el.releasePointerCapture(pointerId);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const isCanvasToolActive = useCallback((tool: string) => {
+    return tool === 'draw' || tool === 'measure' || tool === 'fog';
+  }, []);
+
+  const isKonvaStageTarget = useCallback((target: EventTarget | null) => {
+    const konvaContainer = stageRef.current?.container();
+    return !!(konvaContainer && target instanceof Node && konvaContainer.contains(target));
   }, []);
 
   const getWorld = useCallback(
@@ -641,11 +690,11 @@ export function MapViewport() {
 
   const commitFogRect = (a: Point, b: Point) => {
     if (!activeSceneId) return;
-    const radius = (GRID_SIZE_PX * fogBrushCells) / 2;
-    const x = Math.min(a.x, b.x) - radius;
-    const y = Math.min(a.y, b.y) - radius;
-    const w = Math.abs(b.x - a.x) + radius * 2;
-    const h = Math.abs(b.y - a.y) + radius * 2;
+    const x = Math.min(a.x, b.x);
+    const y = Math.min(a.y, b.y);
+    const w = Math.abs(b.x - a.x);
+    const h = Math.abs(b.y - a.y);
+    if (w < 1 && h < 1) return;
     useStore.getState().applyFogRect(activeSceneId, { x, y, w, h }, fogMode);
   };
 
@@ -695,64 +744,90 @@ export function MapViewport() {
 
   const updateMeasurePreview = (start: Point, end: Point) => {
     if (!scene) return;
-    const paramStyle = measureDebugDualView ? 'vtt' : measureDisplayStyle;
+    const state = useStore.getState();
+    const paramStyle = state.measureDebugDualView ? 'vtt' : state.measureDisplayStyle;
+    const gridOffset = scene.gridOffset ?? DEFAULT_GRID_OFFSET;
     const params = measureParamsFromDrag(
-      measureKind,
+      state.measureKind,
       start,
       end,
-      coneAngleDeg,
+      state.coneAngleDeg,
       paramStyle,
       gridOffset,
     );
-    if (!isValidMeasurePreview(measureKind, params)) {
+    if (!isValidMeasurePreview(state.measureKind, params)) {
       setEphemeralMeasure(null);
       return;
     }
     setEphemeralMeasure({
-      kind: measureKind,
+      kind: state.measureKind,
       opacity: 1,
-      displayStyle: measureDisplayStyle,
+      displayStyle: state.measureDisplayStyle,
       params,
     });
   };
 
   const updateDrawPreview = (start: Point, end: Point, shiftKey = false) => {
-    if (drawShape === 'stroke' || drawShape === 'erase') return;
-    if (drawShape === 'rect') {
+    const shape = useStore.getState().drawShape;
+    const state = useStore.getState();
+    if (shape === 'stroke' || shape === 'erase') return;
+    if (shape === 'rect') {
       setDrawPreview({
         kind: 'rect',
         params: drawRectParamsFromDrag(start, end, shiftKey),
         color: drawColor,
-        strokeWidth: drawStrokeWidth,
+        strokeWidth: state.drawStrokeWidth,
       });
       return;
     }
-    if (drawShape === 'sphere') {
+    if (shape === 'sphere') {
+      const gridOffset = scene?.gridOffset ?? DEFAULT_GRID_OFFSET;
       setDrawPreview({
         kind: 'sphere',
         params: drawCircleParamsFromDrag(start, end, gridOffset),
         color: drawColor,
-        strokeWidth: drawStrokeWidth,
+        strokeWidth: state.drawStrokeWidth,
       });
       return;
     }
     setDrawPreview({
-      kind: drawShape,
-      params: measureParamsFromDrag(drawShape, start, end, coneAngleDeg, measureDisplayStyle),
+      kind: shape,
+      params: measureParamsFromDrag(
+        shape,
+        start,
+        end,
+        state.coneAngleDeg,
+        state.measureDisplayStyle,
+      ),
       color: drawColor,
-      strokeWidth: drawStrokeWidth,
+      strokeWidth: state.drawStrokeWidth,
     });
   };
 
   const commitDrawPreview = (preview: DrawPreview) => {
-    if (!activeSceneId || !isValidDrawPreview(preview)) return;
-    addDrawStroke(activeSceneId, {
+    const state = useStore.getState();
+    const sceneId = state.activeSceneId;
+    let previewToCommit = preview;
+    if (
+      preview.kind === 'stroke' &&
+      (preview.points?.length ?? 0) < 2 &&
+      drawPath.current.length >= 2
+    ) {
+      previewToCommit = {
+        ...preview,
+        points: drawPath.current,
+        strokeWidth: state.drawStrokeWidth,
+      };
+    }
+    const valid = isValidDrawPreview(previewToCommit);
+    if (!sceneId || !valid) return;
+    addDrawStroke(sceneId, {
       id: newId(),
-      kind: preview.kind,
-      color: resolveDrawColor(preview.color),
-      strokeWidth: preview.strokeWidth,
-      points: preview.points,
-      params: preview.params,
+      kind: previewToCommit.kind,
+      color: resolveDrawColor(previewToCommit.color),
+      strokeWidth: previewToCommit.strokeWidth,
+      points: previewToCommit.points,
+      params: previewToCommit.params,
     });
   };
 
@@ -799,21 +874,129 @@ export function MapViewport() {
   );
 
   const commitMeasure = () => {
-    if (!activeSceneId || !scene) return;
-    const em = useStore.getState().ephemeralMeasure;
-    if (!em || !isValidMeasurePreview(em.kind, em.params)) return;
-    if (measurePinMode) {
-      pinEphemeralMeasurement(activeSceneId, em.kind, em.params, em.displayStyle);
+    const state = useStore.getState();
+    const sceneId = state.activeSceneId;
+    const hasScene = !!(sceneId && state.campaign?.scenes[sceneId]);
+    const em = state.ephemeralMeasure;
+    const valid = em ? isValidMeasurePreview(em.kind, em.params) : false;
+    if (!sceneId || !hasScene) return;
+    if (!em || !valid) return;
+    if (state.measurePinMode) {
+      pinEphemeralMeasurement(sceneId, em.kind, em.params, em.displayStyle);
       setEphemeralMeasure(null);
     } else {
       startFadeEphemeral();
     }
   };
 
+  const startCanvasToolGesture = useCallback(
+    (ptr: Point, shiftKey: boolean) => {
+      if (!scene || !activeSceneId) return false;
+      lastPointerScreen.current = ptr;
+      const world = getWorld(ptr);
+      const tool = useStore.getState().activeTool;
+
+      if (tool === 'fog' && canEditFog()) {
+        const snapWorld = getFogSnappedWorld(ptr);
+        canvasGestureToolRef.current = 'fog';
+        fogStart.current = snapWorld;
+        if (fogShape === 'stroke') {
+          fogPath.current = [snapWorld];
+          setFogPreview({
+            kind: 'stroke',
+            points: [snapWorld],
+            radius: (GRID_SIZE_PX * fogBrushCells) / 2,
+          });
+        } else if (fogShape === 'rect') {
+          fogRectStart.current = snapWorld;
+          setFogPreview({
+            kind: 'rect',
+            from: snapWorld,
+            to: snapWorld,
+          });
+        } else if (fogShape === 'cone') {
+          fogConeOrigin.current = snapWorld;
+          setFogPreview({
+            kind: 'cone',
+            origin: snapWorld,
+            direction: 0,
+            lengthCells: 1,
+            angleDeg: coneAngleDeg,
+            style: measureDisplayStyle,
+          });
+        } else if (fogShape === 'sphere') {
+          const c = getFogGridCell(ptr);
+          fogSphereCenter.current = c;
+          setFogPreview({ kind: 'sphere', center: c, radiusCells: 0 });
+        }
+        return true;
+      }
+
+      if (tool === 'measure') {
+        const snapped = getMeasureSnappedWorld(ptr);
+        measureStart.current = snapped;
+        canvasGestureToolRef.current = 'measure';
+        updateMeasurePreview(snapped, snapped);
+        return true;
+      }
+
+      if (tool === 'draw') {
+        canvasGestureToolRef.current = 'draw';
+        if (drawShape === 'erase') {
+          drawStart.current = world;
+          erasedStrokeIds.current = new Set();
+          eraseLastWorld.current = world;
+          applyEraseAt(world);
+        } else if (drawShape === 'stroke') {
+          const snapped = getSnappedWorld(ptr);
+          drawStart.current = snapped;
+          drawPath.current = [snapped];
+          setDrawPreview({
+            kind: 'stroke',
+            points: [snapped],
+            color: drawColor,
+            strokeWidth: drawStrokeWidth,
+          });
+        } else {
+          const snapped = getSnappedWorld(ptr);
+          drawStart.current = snapped;
+          updateDrawPreview(snapped, snapped, shiftKey);
+        }
+        return true;
+      }
+
+      return false;
+    },
+    [
+      activeSceneId,
+      applyEraseAt,
+      coneAngleDeg,
+      drawColor,
+      drawShape,
+      drawStrokeWidth,
+      fogBrushCells,
+      fogShape,
+      getFogGridCell,
+      getFogSnappedWorld,
+      getMeasureSnappedWorld,
+      getSnappedWorld,
+      getWorld,
+      measureDisplayStyle,
+      scene,
+      setDrawPreview,
+      setFogPreview,
+      updateDrawPreview,
+      updateMeasurePreview,
+    ],
+  );
+
   const onPointerDown = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     const evt = e.evt as MouseEvent;
     if (evt.type === 'mousedown' && evt.button !== 0) return;
     if (useStore.getState().interactionMode === 'scaling') return;
+    const ptr = getPointer();
+    if (ptr && isDismissibleMeasureLabelHit(stageRef.current, ptr)) return;
+    if (isCanvasToolActive(useStore.getState().activeTool)) return;
 
     const isTouch = evt.type.startsWith('touch');
     if (isTouch && 'touches' in evt) {
@@ -823,7 +1006,6 @@ export function MapViewport() {
     }
     if (pointerCount.current >= 2) return;
 
-    const ptr = getPointer();
     if (!ptr || !scene || !activeSceneId) return;
     lastPointerScreen.current = ptr;
     const world = getWorld(ptr);
@@ -834,74 +1016,6 @@ export function MapViewport() {
       const refMap = referenceMapLayer(scene, selectedMapLayerId);
       if (refMap) gridAnchorMapLocal.current = worldToMapLocal(world, refMap.transform);
       setGridPreviewSizePx(GRID_SIZE_PX);
-      return;
-    }
-
-    if (activeTool === 'fog' && canEditFog()) {
-      const snapWorld = getFogSnappedWorld(ptr);
-      fogStart.current = snapWorld;
-      if (fogShape === 'stroke') {
-        fogPath.current = [snapWorld];
-        setFogPreview({
-          kind: 'stroke',
-          points: [snapWorld],
-          radius: (GRID_SIZE_PX * fogBrushCells) / 2,
-        });
-      } else if (fogShape === 'rect') {
-        fogRectStart.current = snapWorld;
-        setFogPreview({
-          kind: 'rect',
-          from: snapWorld,
-          to: snapWorld,
-          radius: (GRID_SIZE_PX * fogBrushCells) / 2,
-        });
-      } else if (fogShape === 'cone') {
-        fogConeOrigin.current = snapWorld;
-        setFogPreview({
-          kind: 'cone',
-          origin: snapWorld,
-          direction: 0,
-          lengthCells: 1,
-          angleDeg: coneAngleDeg,
-          style: measureDisplayStyle,
-        });
-      } else if (fogShape === 'sphere') {
-        const c = getFogGridCell(ptr);
-        fogSphereCenter.current = c;
-        setFogPreview({ kind: 'sphere', center: c, radiusCells: 0 });
-      }
-      return;
-    }
-
-    if (activeTool === 'measure') {
-      const snapped = getMeasureSnappedWorld(ptr);
-      measureStart.current = snapped;
-      updateMeasurePreview(snapped, snapped);
-      return;
-    }
-
-    if (activeTool === 'draw') {
-      if (drawShape === 'erase') {
-        drawStart.current = world;
-        erasedStrokeIds.current = new Set();
-        eraseLastWorld.current = world;
-        applyEraseAt(world);
-      } else if (drawShape === 'stroke') {
-        const snapped = getSnappedWorld(ptr);
-        drawStart.current = snapped;
-        drawPath.current = [snapped];
-        setDrawPreview({
-          kind: 'stroke',
-          points: [snapped],
-          color: drawColor,
-          strokeWidth: drawStrokeWidth,
-        });
-      } else {
-        const snapped = getSnappedWorld(ptr);
-        drawStart.current = snapped;
-        const shiftKey = 'shiftKey' in evt && (evt as MouseEvent).shiftKey;
-        updateDrawPreview(snapped, snapped, shiftKey);
-      }
       return;
     }
 
@@ -981,6 +1095,7 @@ export function MapViewport() {
 
   const onPointerMove = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     if (useStore.getState().interactionMode === 'scaling') return;
+    if (canvasGesturePointerId.current != null) return;
     const evt = e.evt;
     const isTouch = evt.type.startsWith('touch');
     if (isTouch) {
@@ -1045,7 +1160,6 @@ export function MapViewport() {
           kind: 'rect',
           from: fogRectStart.current,
           to: snapWorld,
-          radius: (GRID_SIZE_PX * fogBrushCells) / 2,
         });
       } else if (fogShape === 'cone' && fogConeOrigin.current) {
         const o = fogConeOrigin.current;
@@ -1139,8 +1253,155 @@ export function MapViewport() {
     }
   };
 
-  const onPointerUp = () => {
-    tokenDragPending.current = null;
+  const refreshCanvasGesturePreviewBeforeCommit = () => {
+    const ptr = lastPointerScreen.current;
+    if (!ptr) return;
+    const state = useStore.getState();
+    const tool = state.activeTool;
+    const shape = state.drawShape;
+    if (tool === 'measure' && measureStart.current) {
+      updateMeasurePreview(measureStart.current, getMeasureSnappedWorld(ptr));
+      return;
+    }
+    if (tool === 'draw' && drawStart.current) {
+      if (shape === 'stroke') {
+        const snapped = getSnappedWorld(ptr);
+        const path = drawPath.current;
+        const last = path[path.length - 1];
+        const minStep = Math.max(2, state.drawStrokeWidth / 2);
+        if (
+          path.length < 2 ||
+          !last ||
+          Math.hypot(snapped.x - last.x, snapped.y - last.y) >= minStep
+        ) {
+          drawPath.current = [...path, snapped];
+        }
+        setDrawPreview({
+          kind: 'stroke',
+          points: drawPath.current,
+          color: drawColor,
+          strokeWidth: state.drawStrokeWidth,
+        });
+      } else if (shape !== 'erase') {
+        updateDrawPreview(drawStart.current, getSnappedWorld(ptr), false);
+      }
+    }
+  };
+
+  const updateCanvasGestureAtScreen = (ptr: Point, shiftKey = false) => {
+    if (!scene) return;
+    lastPointerScreen.current = ptr;
+    const world = getWorld(ptr);
+    const state = useStore.getState();
+    const tool = state.activeTool;
+    const shape = state.drawShape;
+
+    if (tool === 'fog' && fogStart.current) {
+      const snapWorld = getFogSnappedWorld(ptr);
+      if (state.fogShape === 'stroke') {
+        const path = fogPath.current;
+        const last = path[path.length - 1];
+        const minStep = gridSnapStrokeMinStep(
+          state.selectSnap,
+          Math.max(2, (GRID_SIZE_PX * state.fogBrushCells) / 4),
+        );
+        if (!last || Math.hypot(snapWorld.x - last.x, snapWorld.y - last.y) >= minStep) {
+          fogPath.current = [...path, snapWorld];
+        }
+        setFogPreview({
+          kind: 'stroke',
+          points: fogPath.current,
+          radius: (GRID_SIZE_PX * state.fogBrushCells) / 2,
+        });
+      } else if (state.fogShape === 'rect' && fogRectStart.current) {
+        setFogPreview({
+          kind: 'rect',
+          from: fogRectStart.current,
+          to: snapWorld,
+        });
+      } else if (state.fogShape === 'cone' && fogConeOrigin.current) {
+        const o = fogConeOrigin.current;
+        const dir = Math.atan2(snapWorld.y - o.y, snapWorld.x - o.x);
+        const lenWorld = Math.max(
+          0,
+          (snapWorld.x - o.x) * Math.cos(dir) + (snapWorld.y - o.y) * Math.sin(dir),
+        );
+        const len = Math.max(0, Math.round(lenWorld / GRID_SIZE_PX));
+        setFogPreview({
+          kind: 'cone',
+          origin: o,
+          direction: dir,
+          lengthCells: len,
+          lengthWorld: lenWorld,
+          angleDeg: state.coneAngleDeg,
+          style: state.measureDisplayStyle,
+        });
+      } else if (state.fogShape === 'sphere' && fogSphereCenter.current) {
+        const c = fogSphereCenter.current;
+        const wc = getFogGridCell(ptr);
+        const r = Math.round(Math.hypot(wc.col - c.col, wc.row - c.row));
+        setFogPreview({ kind: 'sphere', center: c, radiusCells: r });
+      }
+      return;
+    }
+
+    if (tool === 'measure' && measureStart.current) {
+      updateMeasurePreview(measureStart.current, getMeasureSnappedWorld(ptr));
+      return;
+    }
+
+    if (tool === 'draw' && shape === 'erase') {
+      updateErasePreviewAt(world);
+      if (drawStart.current) {
+        const last = eraseLastWorld.current ?? drawStart.current;
+        if (last) applyEraseAlong(last, world);
+        eraseLastWorld.current = world;
+      }
+      return;
+    }
+
+    if (tool === 'draw' && drawStart.current) {
+      if (shape === 'stroke') {
+        const snapped = getSnappedWorld(ptr);
+        const path = drawPath.current;
+        const last = path[path.length - 1];
+        const minStep = Math.max(2, state.drawStrokeWidth / 2);
+        if (!last || Math.hypot(snapped.x - last.x, snapped.y - last.y) >= minStep) {
+          drawPath.current = [...path, snapped];
+        }
+        setDrawPreview({
+          kind: 'stroke',
+          points: drawPath.current,
+          color: drawColor,
+          strokeWidth: state.drawStrokeWidth,
+        });
+      } else {
+        updateDrawPreview(drawStart.current, getSnappedWorld(ptr), shiftKey);
+      }
+    }
+  };
+
+  const onPointerUp = (source: 'stage' | 'window' | 'container' = 'stage') => {
+    const stateAtUp = useStore.getState();
+    const hasCanvasGesture =
+      !!drawStart.current || !!measureStart.current || !!fogStart.current;
+    if (hasCanvasGesture) {
+      if (canvasGestureFinishGuard.current) return;
+      canvasGestureFinishGuard.current = true;
+    } else if (source !== 'stage') {
+      return;
+    }
+
+    let tool = stateAtUp.activeTool;
+    try {
+      tokenDragPending.current = null;
+      refreshCanvasGesturePreviewBeforeCommit();
+
+      const state = useStore.getState();
+      tool = canvasGestureToolRef.current ?? state.activeTool;
+      const shape = state.drawShape;
+      const sceneId = state.activeSceneId;
+      const currentFogPreview = state.fogPreview;
 
     if (editTool === 'gridEdit' && gridAnchor.current) {
       const aScreen = gridAnchorScreen.current;
@@ -1151,28 +1412,29 @@ export function MapViewport() {
       // Keep the anchor pinned to the same screen location (so camera doesn't "jump").
       if (aScreen && bScreen && scene && activeSceneId) {
         const refMap = referenceMapLayer(scene, selectedMapLayerId);
-        if (!refMap) return;
-        const prev = refMap.transform;
-        const anchorWorldNow = getWorld(aScreen);
-        const anchorWorldSnapped = snapWorldToGridCorner(anchorWorldNow);
-        const aLocal = gridAnchorMapLocal.current ?? worldToMapLocal(anchorWorldNow, prev);
-        const bWorld = getWorld(bScreen);
-        const bLocal = worldToMapLocal(bWorld, prev);
+        if (refMap) {
+          const prev = refMap.transform;
+          const anchorWorldNow = getWorld(aScreen);
+          const anchorWorldSnapped = snapWorldToGridCorner(anchorWorldNow);
+          const aLocal = gridAnchorMapLocal.current ?? worldToMapLocal(anchorWorldNow, prev);
+          const bWorld = getWorld(bScreen);
+          const bLocal = worldToMapLocal(bWorld, prev);
 
-        const distLocal = Math.hypot(bLocal.x - aLocal.x, bLocal.y - aLocal.y);
-        if (distLocal >= 2) {
-          const nextScale = Math.min(8, Math.max(0.05, GRID_SIZE_PX / distLocal));
+          const distLocal = Math.hypot(bLocal.x - aLocal.x, bLocal.y - aLocal.y);
+          if (distLocal >= 2) {
+            const nextScale = Math.min(8, Math.max(0.05, GRID_SIZE_PX / distLocal));
 
-          const next: MapTransform = { ...prev, scale: nextScale, x: 0, y: 0 };
-          const aWorldNoTranslate = mapLocalToWorld(aLocal, { ...next, x: 0, y: 0 });
-          const nextX = anchorWorldSnapped.x - aWorldNoTranslate.x;
-          const nextY = anchorWorldSnapped.y - aWorldNoTranslate.y;
+            const next: MapTransform = { ...prev, scale: nextScale, x: 0, y: 0 };
+            const aWorldNoTranslate = mapLocalToWorld(aLocal, { ...next, x: 0, y: 0 });
+            const nextX = anchorWorldSnapped.x - aWorldNoTranslate.x;
+            const nextY = anchorWorldSnapped.y - aWorldNoTranslate.y;
 
-          updateMapLayerTransform(activeSceneId, refMap.id, {
-            x: nextX,
-            y: nextY,
-            scale: nextScale,
-          });
+            updateMapLayerTransform(activeSceneId, refMap.id, {
+              x: nextX,
+              y: nextY,
+              scale: nextScale,
+            });
+          }
         }
       }
 
@@ -1182,30 +1444,33 @@ export function MapViewport() {
       setGridPreviewSizePx(null);
     }
 
-    if (activeTool === 'fog' && fogStart.current && fogPreview && activeSceneId) {
-      if (fogPreview.kind === 'stroke') {
-        commitFogStroke(fogPreview.points ?? []);
-      } else if (fogPreview.kind === 'rect' && fogPreview.from && fogPreview.to) {
-        commitFogRect(fogPreview.from, fogPreview.to);
+    if (tool === 'fog' && fogStart.current && currentFogPreview && sceneId) {
+      if (currentFogPreview.kind === 'stroke') {
+        commitFogStroke(currentFogPreview.points ?? []);
+      } else if (currentFogPreview.kind === 'rect' && currentFogPreview.from && currentFogPreview.to) {
+        const { from, to } = currentFogPreview;
+        if (from.x !== to.x || from.y !== to.y) {
+          commitFogRect(from, to);
+        }
       } else if (
-        fogPreview.kind === 'cone' &&
-        fogPreview.origin &&
-        typeof fogPreview.direction === 'number' &&
-        typeof fogPreview.lengthCells === 'number'
+        currentFogPreview.kind === 'cone' &&
+        currentFogPreview.origin &&
+        typeof currentFogPreview.direction === 'number' &&
+        typeof currentFogPreview.lengthCells === 'number'
       ) {
         commitFogCone(
-          fogPreview.origin,
-          fogPreview.direction,
-          fogPreview.lengthCells,
-          fogPreview.style ?? measureDisplayStyle,
-          fogPreview.lengthWorld,
+          currentFogPreview.origin,
+          currentFogPreview.direction,
+          currentFogPreview.lengthCells,
+          currentFogPreview.style ?? state.measureDisplayStyle,
+          currentFogPreview.lengthWorld,
         );
       } else if (
-        fogPreview.kind === 'sphere' &&
-        fogPreview.center &&
-        typeof fogPreview.radiusCells === 'number'
+        currentFogPreview.kind === 'sphere' &&
+        currentFogPreview.center &&
+        typeof currentFogPreview.radiusCells === 'number'
       ) {
-        commitFogSphere(fogPreview.center, fogPreview.radiusCells);
+        commitFogSphere(currentFogPreview.center, currentFogPreview.radiusCells);
       }
       fogStart.current = null;
       fogPath.current = [];
@@ -1215,17 +1480,28 @@ export function MapViewport() {
       setFogPreview(null);
     }
 
-    if (activeTool === 'measure' && measureStart.current) {
+    if (tool === 'measure' && measureStart.current) {
       commitMeasure();
       measureStart.current = null;
     }
 
-    if (activeTool === 'draw' && drawStart.current) {
-      if (drawShape === 'erase') {
+    if (tool === 'draw' && drawStart.current) {
+      if (shape === 'erase') {
         const ptr = lastPointerScreen.current;
         if (ptr) updateErasePreviewAt(getWorld(ptr));
       } else {
-        const preview = useStore.getState().drawPreview;
+        let preview = useStore.getState().drawPreview;
+        if (
+          preview?.kind === 'stroke' &&
+          (preview.points?.length ?? 0) < 2 &&
+          drawPath.current.length >= 2
+        ) {
+          preview = {
+            ...preview,
+            points: drawPath.current,
+            strokeWidth: state.drawStrokeWidth,
+          };
+        }
         if (preview) commitDrawPreview(preview);
         setDrawPreview(null);
       }
@@ -1235,7 +1511,14 @@ export function MapViewport() {
       eraseLastWorld.current = null;
     }
 
-    if (activeTool === 'select' && marqueeStart.current && scene) {
+    canvasGestureToolRef.current = null;
+    } finally {
+      if (hasCanvasGesture) {
+        canvasGestureFinishGuard.current = false;
+      }
+    }
+
+    if (tool === 'select' && marqueeStart.current && scene) {
       const start = marqueeStart.current;
       const end = lastPointerScreen.current ?? start;
       const dist = Math.hypot(end.x - start.x, end.y - start.y);
@@ -1289,6 +1572,62 @@ export function MapViewport() {
     pointerCount.current = 0;
     lastPinchDist.current = null;
   };
+
+  finishCanvasGestureRef.current = onPointerUp;
+
+  const onContainerPointerDownCapture = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      if (useStore.getState().interactionMode === 'scaling') return;
+      const tool = useStore.getState().activeTool;
+      if (!isCanvasToolActive(tool)) return;
+      if (tool === 'fog' && !canEditFog()) return;
+      if (!isKonvaStageTarget(e.target)) return;
+
+    const ptr = syncPointerFromClientEvent(e.nativeEvent);
+    if (!ptr) return;
+    if (isDismissibleMeasureLabelHit(stageRef.current, ptr)) return;
+    if (!startCanvasToolGesture(ptr, e.shiftKey)) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      canvasGesturePointerId.current = e.pointerId;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    },
+    [isCanvasToolActive, isKonvaStageTarget, startCanvasToolGesture, syncPointerFromClientEvent],
+  );
+
+  const onContainerPointerMoveCapture = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (canvasGesturePointerId.current !== e.pointerId) return;
+      if (!drawStart.current && !measureStart.current && !fogStart.current) return;
+      const ptr = syncPointerFromClientEvent(e.nativeEvent);
+      if (!ptr) return;
+      e.preventDefault();
+      e.stopPropagation();
+      updateCanvasGestureAtScreen(ptr, e.shiftKey);
+    },
+    [syncPointerFromClientEvent, updateCanvasGestureAtScreen],
+  );
+
+  const onContainerPointerUpCapture = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (canvasGesturePointerId.current !== e.pointerId) return;
+      if (!drawStart.current && !measureStart.current && !fogStart.current) return;
+      syncPointerFromClientEvent(e.nativeEvent);
+      e.preventDefault();
+      e.stopPropagation();
+      const pointerId = e.pointerId;
+      canvasGesturePointerId.current = null;
+      finishCanvasGestureRef.current('container');
+      releaseCanvasPointerCapture(pointerId);
+    },
+    [releaseCanvasPointerCapture, syncPointerFromClientEvent],
+  );
 
   const onWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
@@ -1599,27 +1938,11 @@ export function MapViewport() {
       const tag = target?.tagName?.toLowerCase();
       if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
 
-      const increase =
-        e.key === '+' ||
-        e.key === '=' ||
-        e.code === 'NumpadAdd';
-      const decrease =
-        e.key === '-' ||
-        e.key === '_' ||
-        e.code === 'NumpadSubtract';
-      const cycleSnap = e.code === 'Space';
-
-      if (!increase && !decrease && !cycleSnap) return;
+      if (e.code !== 'Space') return;
 
       e.preventDefault();
       const { selectSnap, setSelectSnap } = useStore.getState();
-      if (cycleSnap) {
-        setSelectSnap(nextGridSnapCycleValue(selectSnap));
-        return;
-      }
-      const snapStep = e.shiftKey ? 0.5 : GRID_SNAP_STEP;
-      const next = selectSnap + (increase ? snapStep : -snapStep);
-      setSelectSnap(quantizeGridSnapStrength(next));
+      setSelectSnap(nextGridSnapCycleValue(selectSnap));
     };
 
     window.addEventListener('keydown', onKeyDown, { passive: false });
@@ -1769,9 +2092,7 @@ export function MapViewport() {
     if (activeTool !== 'draw') return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+      if (!allowDrawToolKeyboardShortcut(e.target)) return;
 
       const shape = drawShapeForKey(e.key, e.code);
       if (shape) {
@@ -1780,20 +2101,12 @@ export function MapViewport() {
         return;
       }
 
-      const step = e.shiftKey ? 4 : 1;
-      const increase =
-        e.key === '+' ||
-        e.key === '=' ||
-        e.code === 'NumpadAdd';
-      const decrease =
-        e.key === '-' ||
-        e.key === '_' ||
-        e.code === 'NumpadSubtract';
-      if (!increase && !decrease) return;
+      const delta = drawStrokeWidthKeyboardDelta(e);
+      if (delta == null) return;
 
       e.preventDefault();
       const { drawStrokeWidth, setDrawStrokeWidth } = useStore.getState();
-      setDrawStrokeWidth(drawStrokeWidth + (increase ? step : -step));
+      setDrawStrokeWidth(stepDrawStrokeWidth(drawStrokeWidth, delta));
     };
 
     window.addEventListener('keydown', onKeyDown, { passive: false });
@@ -1836,6 +2149,14 @@ export function MapViewport() {
         return;
       }
 
+      if (isMeasurePinToggleKey(e.key)) {
+        if (e.repeat) return;
+        e.preventDefault();
+        const { measurePinMode, setMeasurePinMode } = useStore.getState();
+        setMeasurePinMode(!measurePinMode);
+        return;
+      }
+
       const kind = measureKindForKey(e.key, e.code);
       if (!kind) return;
       e.preventDefault();
@@ -1844,6 +2165,47 @@ export function MapViewport() {
 
     window.addEventListener('keydown', onKeyDown, { passive: false });
     return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeTool]);
+
+  useEffect(() => {
+    if (activeTool !== 'fog' || !canEditFog()) return;
+
+    let previewBeforeShift: boolean | null = null;
+
+    const isTypingTarget = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName?.toLowerCase();
+      return tag === 'input' || tag === 'textarea' || el.isContentEditable;
+    };
+
+    const restorePreview = () => {
+      if (previewBeforeShift === null) return;
+      useStore.getState().setFogOpaquePreview(previewBeforeShift);
+      previewBeforeShift = null;
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!isShiftKey(e.key) || e.repeat || isTypingTarget(e.target)) return;
+      const { fogOpaquePreview, setFogOpaquePreview } = useStore.getState();
+      previewBeforeShift = fogOpaquePreview;
+      if (!fogOpaquePreview) setFogOpaquePreview(true);
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (!isShiftKey(e.key)) return;
+      restorePreview();
+    };
+
+    window.addEventListener('keydown', onKeyDown, { passive: false });
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', restorePreview);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', restorePreview);
+      restorePreview();
+    };
   }, [activeTool]);
 
   useEffect(() => {
@@ -1865,6 +2227,10 @@ export function MapViewport() {
       ref={containerRef}
       className="relative h-full w-full touch-none overflow-hidden bg-slate-950"
       style={{ touchAction: 'none' }}
+      onPointerDownCapture={onContainerPointerDownCapture}
+      onPointerMoveCapture={onContainerPointerMoveCapture}
+      onPointerUpCapture={onContainerPointerUpCapture}
+      onPointerCancelCapture={onContainerPointerUpCapture}
       onMouseLeave={() => {
         if (activeTool === 'draw' && drawShape === 'erase' && !drawStart.current) {
           setErasePreview(null);
@@ -1963,10 +2329,10 @@ export function MapViewport() {
         y={view.y}
         onMouseDown={onPointerDown}
         onMouseMove={onPointerMove}
-        onMouseUp={onPointerUp}
+        onMouseUp={() => onPointerUp('stage')}
         onTouchStart={onPointerDown}
         onTouchMove={onPointerMove}
-        onTouchEnd={onPointerUp}
+        onTouchEnd={() => onPointerUp('stage')}
       >
         <Layer>
           {maps.map((layer) => (
@@ -2017,7 +2383,7 @@ export function MapViewport() {
           />
         </Layer>
         <Layer listening={!asPlayer}>
-          <FogLayer fog={scene.fog} fogPreview={fogPreview} />
+          <FogLayer fog={scene.fog} fogPreview={fogPreview} gridOffset={gridOffset} />
         </Layer>
         <Layer listening={false}>
           <MeasurementLayer

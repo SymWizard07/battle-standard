@@ -10,7 +10,7 @@ import {
   line5eIncludedCells,
   sphere5eIncludedCells,
 } from '../../lib/measure';
-import { isValidMeasurePreview } from '../../lib/drawShapes';
+import { isValidMeasurePreview, measureShapeOrigin } from '../../lib/drawShapes';
 import { getMeasureLabelInfo } from '../../lib/measureLabel';
 import { isMeasurementOwnedBySessionUser } from '../../lib/measureOwnership';
 import type {
@@ -35,6 +35,29 @@ import { useStore } from '../../store/useStore';
 /** Debug overlay colors when VTT + 5e are shown together. */
 const DEBUG_VTT_COLOR = '#fbbf24';
 const DEBUG_5E_COLOR = '#38bdf8';
+const MEASURE_ORIGIN_RADIUS = 3;
+
+function MeasureOriginDot({
+  origin,
+  color,
+  opacity,
+}: {
+  origin: Point;
+  color: string;
+  opacity: number;
+}) {
+  return (
+    <Circle
+      x={origin.x}
+      y={origin.y}
+      radius={MEASURE_ORIGIN_RADIUS}
+      fill={color}
+      opacity={opacity}
+      listening={false}
+      perfectDrawEnabled={false}
+    />
+  );
+}
 
 interface Props {
   measurements: MeasurementObject[];
@@ -284,16 +307,23 @@ function renderMeasurement(
   activeStyle: MeasureDisplayStyle,
   debugDualView: boolean,
 ) {
+  const origin = measureShapeOrigin(kind, params);
+  let body: ReactNode;
   if (kind === 'line') {
-    return renderLine(params as LineMeasureParams, color, opacity, key, activeStyle, debugDualView);
+    body = renderLine(params as LineMeasureParams, color, opacity, key, activeStyle, debugDualView);
+  } else if (kind === 'cube') {
+    body = renderCube(params as CubeMeasureParams, color, opacity, key, activeStyle, debugDualView);
+  } else if (kind === 'sphere') {
+    body = renderSphere(params as SphereMeasureParams, color, opacity, key, activeStyle, debugDualView);
+  } else {
+    body = renderCone(params as ConeMeasureParams, color, opacity, key, activeStyle, debugDualView);
   }
-  if (kind === 'cube') {
-    return renderCube(params as CubeMeasureParams, color, opacity, key, activeStyle, debugDualView);
-  }
-  if (kind === 'sphere') {
-    return renderSphere(params as SphereMeasureParams, color, opacity, key, activeStyle, debugDualView);
-  }
-  return renderCone(params as ConeMeasureParams, color, opacity, key, activeStyle, debugDualView);
+  return (
+    <Group key={key} listening={false}>
+      {body}
+      <MeasureOriginDot origin={origin} color={color} opacity={opacity} />
+    </Group>
+  );
 }
 
 export function MeasurementLayer({

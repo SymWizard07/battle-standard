@@ -72,8 +72,8 @@ assertEqual(
   '+ steps to next slider stop',
 );
 assertEqual(stepDrawStrokeWidth(DRAW_STROKE_WIDTH_DEFAULT, -1), 3, '- steps to previous slider stop');
-assertEqual(drawStrokeWidthKeyboardDelta({ code: 'Equal', shiftKey: false, ctrlKey: false, metaKey: false, altKey: false }), 1);
-assertEqual(drawStrokeWidthKeyboardDelta({ code: 'Minus', shiftKey: true, ctrlKey: false, metaKey: false, altKey: false }), -2);
+assertEqual(drawStrokeWidthKeyboardDelta({ code: 'Equal', shiftKey: false, ctrlKey: false, metaKey: false, altKey: false })!, 1);
+assertEqual(drawStrokeWidthKeyboardDelta({ code: 'Minus', shiftKey: true, ctrlKey: false, metaKey: false, altKey: false })!, -2);
 assertNull(drawStrokeWidthKeyboardDelta({ code: 'Equal', shiftKey: false, ctrlKey: true, metaKey: false, altKey: false }));
 
 console.log('drawConstants.test.ts: all passed');

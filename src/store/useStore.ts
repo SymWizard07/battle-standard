@@ -1543,27 +1543,6 @@ export const useStore = create<AppStore>((set, get) => ({
         ],
       ];
 
-      const fogToMulti = (polys: FogPolygon[]): MultiPolygon => {
-        const out: MultiPolygon = [];
-        for (const p of polys) {
-          const anyP = p as any;
-          const ringsSrc: { x: number; y: number }[][] =
-            Array.isArray(anyP.rings) ? anyP.rings : Array.isArray(anyP.points) ? [anyP.points] : [];
-          if (ringsSrc.length === 0) continue;
-          const poly: Polygon = [];
-          for (const r of ringsSrc) {
-            if (r.length < 3) continue;
-            const ring: Ring = r.map((pt) => [pt.x, pt.y]);
-            const first = ring[0]!;
-            const last = ring[ring.length - 1]!;
-            if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
-            poly.push(ring);
-          }
-          if (poly.length) out.push(poly);
-        }
-        return out;
-      };
-
       const multiToFog = (mp: MultiPolygon): FogPolygon[] => {
         const polys: FogPolygon[] = [];
         for (const poly of mp) {
@@ -1579,8 +1558,8 @@ export const useStore = create<AppStore>((set, get) => ({
         return polys.map((p) => assignFogPolygonMapLayer(p, s));
       };
 
-      const rectPoly = rectToPoly(rect);
-      const { unexploredMp, revealedMp } = mergeFogWithShape(s.fog, rectPoly, mode);
+      const rectMp: MultiPolygon = [rectToPoly(rect)];
+      const { unexploredMp, revealedMp } = mergeFogWithShape(s.fog, rectMp, mode);
       return {
         ...s,
         fog: normalizeFogState({
@@ -1597,27 +1576,6 @@ export const useStore = create<AppStore>((set, get) => ({
       type Ring = Pair[];
       type Polygon = Ring[];
       type MultiPolygon = Polygon[];
-
-      const fogToMulti = (polys: FogPolygon[]): MultiPolygon => {
-        const out: MultiPolygon = [];
-        for (const p of polys) {
-          const anyP = p as any;
-          const ringsSrc: { x: number; y: number }[][] =
-            Array.isArray(anyP.rings) ? anyP.rings : Array.isArray(anyP.points) ? [anyP.points] : [];
-          if (ringsSrc.length === 0) continue;
-          const poly: Polygon = [];
-          for (const r of ringsSrc) {
-            if (r.length < 3) continue;
-            const ring: Ring = r.map((pt) => [pt.x, pt.y]);
-            const first = ring[0]!;
-            const last = ring[ring.length - 1]!;
-            if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
-            poly.push(ring);
-          }
-          if (poly.length) out.push(poly);
-        }
-        return out;
-      };
 
       const multiToFog = (mp: MultiPolygon): FogPolygon[] => {
         const polys: FogPolygon[] = [];
@@ -1693,27 +1651,6 @@ export const useStore = create<AppStore>((set, get) => ({
       type Ring = Pair[];
       type Polygon = Ring[];
       type MultiPolygon = Polygon[];
-
-      const fogToMulti = (polys: FogPolygon[]): MultiPolygon => {
-        const out: MultiPolygon = [];
-        for (const p of polys) {
-          const anyP = p as any;
-          const ringsSrc: { x: number; y: number }[][] =
-            Array.isArray(anyP.rings) ? anyP.rings : Array.isArray(anyP.points) ? [anyP.points] : [];
-          if (ringsSrc.length === 0) continue;
-          const poly: Polygon = [];
-          for (const r of ringsSrc) {
-            if (r.length < 3) continue;
-            const ring: Ring = r.map((pt) => [pt.x, pt.y]);
-            const first = ring[0]!;
-            const last = ring[ring.length - 1]!;
-            if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
-            poly.push(ring);
-          }
-          if (poly.length) out.push(poly);
-        }
-        return out;
-      };
 
       const multiToFog = (mp: MultiPolygon): FogPolygon[] => {
         const polys: FogPolygon[] = [];

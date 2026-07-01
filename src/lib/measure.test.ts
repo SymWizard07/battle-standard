@@ -45,6 +45,7 @@ const halfCellDrag = measureParamsFromDrag(
   'sphere',
   { x: 0, y: 0 },
   { x: GRID_SIZE_PX / 2, y: 0 },
+  60,
 );
 assertEqual((halfCellDrag as { radiusWorld?: number }).radiusWorld ?? 0, GRID_SIZE_PX, 'sphere half-cell drag is 5 ft');
 const halfCellLabel = getMeasureLabelInfo('sphere', halfCellDrag, false);
@@ -56,6 +57,7 @@ const coneDrag = measureParamsFromDrag(
   'cone',
   { x: 0, y: 0 },
   { x: GRID_SIZE_PX * 1.6, y: 0 },
+  60,
 );
 const coneParams = coneDrag as { lengthCells: number; lengthWorld?: number };
 assertEqual(coneParams.lengthCells, 2, 'cone quantizes to whole cells');

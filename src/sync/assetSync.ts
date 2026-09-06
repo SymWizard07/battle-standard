@@ -91,28 +91,36 @@ async function pushCampaignAssets(campaign: Campaign | null): Promise<void> {
   }
 }
 
+/** Broadcast all local campaign assets (clears send cache so new peers get files). */
 export function pushAllAssetsReliable(campaign: Campaign | null): void {
   clearAssetRetry();
+  sentAssetIds.clear();
 
   const send = () => {
-    void pushCampaignAssets(campaign);
+    void pushCampaignAssets(campaign ?? useStore.getState().campaign);
   };
 
   send();
   let attempts = 0;
   assetRetryTimer = setInterval(() => {
     const state = useStore.getState();
-    if (state.role !== 'gm' || !state.campaign) {
+    if (!state.role || !state.campaign) {
       clearAssetRetry();
       return;
     }
+    // Re-send so peers that joined mid-transfer still receive blobs.
+    sentAssetIds.clear();
     void pushCampaignAssets(state.campaign);
     attempts += 1;
     if (attempts >= RELIABLE_MAX_ATTEMPTS) clearAssetRetry();
   }, RELIABLE_RETRY_MS);
 }
 
-export function wireGmAssetSync(): () => void {
+/**
+ * Push local blobs for any assets referenced by the campaign.
+ * Runs for GM and players so peer uploads (paste/library) reach the table.
+ */
+export function wireAssetSync(): () => void {
   const pushAll = () => {
     void pushCampaignAssets(useStore.getState().campaign);
   };
@@ -120,7 +128,7 @@ export function wireGmAssetSync(): () => void {
   pushAll();
 
   const unsub = useStore.subscribe((state, prev) => {
-    if (state.role !== 'gm') return;
+    if (!state.role) return;
     if (state.campaign !== prev.campaign) pushAll();
   });
 

@@ -29,7 +29,7 @@ import {
   handleRemoteAsset,
   hydrateAssetsForCampaign,
   pushAllAssetsReliable,
-  wireGmAssetSync,
+  wireAssetSync,
 } from './assetSync';
 import { mergeCampaignForSync } from './campaignMerge';
 import {
@@ -550,6 +550,8 @@ function wireRoomHandlers(params: ConnectParams): RoomHandlers {
         syncGmStateToPeers();
       } else {
         flushPendingCampaign();
+        // Share any assets this peer uploaded (maps/tokens) with newly joined clients.
+        pushAllAssetsReliable(state.campaign);
       }
     },
     onPeerLeave: (peerId, peerCount) => {
@@ -631,18 +633,23 @@ async function connectSession(
   startRemoteMotion();
 
   if (params.role === 'gm') {
-    unsubscribeAssetSync = wireGmAssetSync();
+    unsubscribeAssetSync = wireAssetSync();
     useStore.getState().setSyncStatus('connected');
     useStore.getState().setPeerCount(getConnectedPeerCount());
   } else {
     useStore.getState().setPeerCount(getConnectedPeerCount());
     void hydrateAssetsForCampaign(useStore.getState().campaign);
-    unsubscribeAssetSync = useStore.subscribe((state, prev) => {
+    const unsubHydrate = useStore.subscribe((state, prev) => {
       if (state.role !== 'player') return;
       if (state.campaign !== prev.campaign) {
         void hydrateAssetsForCampaign(state.campaign);
       }
     });
+    const unsubPush = wireAssetSync();
+    unsubscribeAssetSync = () => {
+      unsubHydrate();
+      unsubPush();
+    };
   }
 }
 

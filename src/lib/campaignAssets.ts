@@ -22,6 +22,9 @@ export function referencedAssetIds(campaign: Campaign | null): Set<string> {
       if (token.imageAssetId) ids.add(token.imageAssetId);
     }
   }
+  for (const entry of campaign.tokenLibrary?.entries ?? []) {
+    if (entry.kind === 'asset') ids.add(entry.assetId);
+  }
   return ids;
 }
 

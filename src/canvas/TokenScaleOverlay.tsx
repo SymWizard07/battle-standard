@@ -4,7 +4,12 @@ import { DEFAULT_GRID_OFFSET } from '../lib/fixedGrid';
 import { defaultPlayerColor } from '../lib/playerColor';
 import { screenToWorld } from '../lib/grid';
 import type { MapCorner } from '../lib/mapGeometry';
-import type { Point, Token, TokenGridPlacement } from '../lib/types';
+import type {
+  Point,
+  Token,
+  TokenImageTransform,
+  TokenOutlineStyle,
+} from '../lib/types';
 import {
   boundsToScreen,
   cornerCursor,
@@ -12,11 +17,13 @@ import {
   cornerHandleWorld,
   footprintAndPlacementFromCornerDrag,
   oppositeScaleCorner,
+  scaleTokenAppearanceForFootprint,
   tokenImageAspectRatio,
   tokenSelectionMarqueeWorldBounds,
   unionWorldBounds,
   type TokenScaleCorner,
   type TokenFootprint,
+  type TokenScalePreview,
   type TokenWorldBounds,
 } from '../lib/tokenScale';
 import { shouldIgnoreGlobalHotkey } from '../lib/keyboardTarget';
@@ -77,6 +84,15 @@ export function TokenScaleOverlay({
   scaleIdsRef.current = scaleIds;
 
   const startFootprintsRef = useRef<Record<string, TokenFootprint>>({});
+  const startAppearanceRef = useRef<
+    Record<
+      string,
+      {
+        imageTransform?: TokenImageTransform;
+        outline?: TokenOutlineStyle;
+      }
+    >
+  >({});
   const startMarqueeBoundsRef = useRef<Record<string, TokenWorldBounds>>({});
   const imageAspectByIdRef = useRef<Record<string, number | null>>({});
   const imageUrlByIdRef = useRef<Record<string, string | undefined>>({});
@@ -87,6 +103,13 @@ export function TokenScaleOverlay({
 
   useEffect(() => {
     const starts: Record<string, TokenFootprint> = {};
+    const appearances: Record<
+      string,
+      {
+        imageTransform?: TokenImageTransform;
+        outline?: TokenOutlineStyle;
+      }
+    > = {};
     const marquees: Record<string, TokenWorldBounds> = {};
     const aspects: Record<string, number | null> = {};
     const urlsById: Record<string, string | undefined> = {};
@@ -96,6 +119,25 @@ export function TokenScaleOverlay({
     for (const id of scaleIdsRef.current) {
       const t = tokens.find((tok) => tok.id === id)!;
       starts[id] = { ...t.footprint };
+      appearances[id] = {
+        ...(t.imageTransform
+          ? {
+              imageTransform: {
+                offset: { ...t.imageTransform.offset },
+                size: { ...t.imageTransform.size },
+              },
+            }
+          : {}),
+        ...(t.outline
+          ? {
+              outline: {
+                shape: t.outline.shape,
+                offset: { ...t.outline.offset },
+                size: { ...t.outline.size },
+              },
+            }
+          : {}),
+      };
       const imageUrl = t.imageAssetId ? urls[t.imageAssetId] : undefined;
       urlsById[id] = imageUrl;
       aspects[id] = tokenImageAspectRatio(imageUrl);
@@ -108,6 +150,7 @@ export function TokenScaleOverlay({
       );
     }
     startFootprintsRef.current = starts;
+    startAppearanceRef.current = appearances;
     startMarqueeBoundsRef.current = marquees;
     imageAspectByIdRef.current = aspects;
     imageUrlByIdRef.current = urlsById;
@@ -125,6 +168,10 @@ export function TokenScaleOverlay({
         footprint: preview.footprint,
         gridPos: preview.placement.gridPos,
         posOffset: preview.placement.posOffset,
+        ...(preview.imageTransform
+          ? { imageTransform: preview.imageTransform }
+          : {}),
+        ...(preview.outline ? { outline: preview.outline } : {}),
       };
     },
     [scalePreviewById],
@@ -155,14 +202,12 @@ export function TokenScaleOverlay({
       const snap = useStore.getState().selectSnap;
       const off = gridOffsetRef.current;
 
-      const previews: Record<
-        string,
-        { footprint: { w: number; h: number }; placement: TokenGridPlacement }
-      > = {};
+      const previews: Record<string, TokenScalePreview> = {};
 
       for (const id of scaleIdsRef.current) {
         const startFp = startFootprintsRef.current[id];
         const fixedMarquee = fixedMarqueeCornerRef.current[id];
+        const startAppearance = startAppearanceRef.current[id] ?? {};
         if (!startFp || !fixedMarquee) continue;
         const { footprint, placement } = footprintAndPlacementFromCornerDrag(
           corner,
@@ -173,8 +218,14 @@ export function TokenScaleOverlay({
           imageAspectByIdRef.current[id] ?? null,
           snap,
           off,
+          startAppearance.outline,
         );
-        previews[id] = { footprint, placement };
+        const scaled = scaleTokenAppearanceForFootprint(
+          startFp,
+          footprint,
+          startAppearance,
+        );
+        previews[id] = { footprint, placement, ...scaled };
       }
       if (Object.keys(previews).length > 0) {
         setScalePreviewById(previews);

@@ -24,6 +24,82 @@ export function defaultImageTransform(footprint: { w: number; h: number }): Toke
   };
 }
 
+export function defaultOutline(footprint: { w: number; h: number }): TokenOutlineStyle {
+  return {
+    shape: 'rect',
+    offset: { x: 0, y: 0 },
+    size: { w: footprint.w, h: footprint.h },
+  };
+}
+
+/**
+ * Appearance-editor footprint with min(w,h) === 1 and the other side = aspect (w/h).
+ * Example: aspect 2 → 2×1; aspect 0.5 → 1×2; aspect 1 → 1×1.
+ */
+export function canonicalFootprintFromAspect(aspect: number): { w: number; h: number } {
+  const a = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+  let w: number;
+  let h: number;
+  if (a >= 1) {
+    h = 1;
+    w = a;
+  } else {
+    w = 1;
+    h = 1 / a;
+  }
+  const clamp = (n: number) =>
+    Math.max(TOKEN_IMAGE_FIT_MIN_CELLS, Math.min(TOKEN_IMAGE_FIT_MAX_CELLS, n));
+  return { w: clamp(w), h: clamp(h) };
+}
+
+function scaleCellRect(
+  rect: { offset: Point; size: { w: number; h: number } },
+  sx: number,
+  sy: number,
+): { offset: Point; size: { w: number; h: number } } {
+  return {
+    offset: { x: rect.offset.x * sx, y: rect.offset.y * sy },
+    size: { w: rect.size.w * sx, h: rect.size.h * sy },
+  };
+}
+
+/** Remap image/outline cell units from one footprint into another (proportional). */
+export function scaleAppearanceBetweenFootprints(
+  from: { w: number; h: number },
+  to: { w: number; h: number },
+  appearance: {
+    imageTransform: TokenImageTransform;
+    outline: TokenOutlineStyle;
+  },
+): { imageTransform: TokenImageTransform; outline: TokenOutlineStyle } {
+  const sx = to.w / Math.max(from.w, 1e-6);
+  const sy = to.h / Math.max(from.h, 1e-6);
+  const image = scaleCellRect(appearance.imageTransform, sx, sy);
+  const outlineRect = scaleCellRect(appearance.outline, sx, sy);
+  return {
+    imageTransform: image,
+    outline: {
+      shape: appearance.outline.shape,
+      offset: outlineRect.offset,
+      size: outlineRect.size,
+    },
+  };
+}
+
+/** Fresh Appearance draft: square canonical slot until natural aspect is known. */
+export function freshCanonicalAppearance(): {
+  footprint: { w: number; h: number };
+  imageTransform: TokenImageTransform;
+  outline: TokenOutlineStyle;
+} {
+  const footprint = canonicalFootprintFromAspect(1);
+  return {
+    footprint,
+    imageTransform: defaultImageTransform(footprint),
+    outline: defaultOutline(footprint),
+  };
+}
+
 /**
  * Place the image so it covers the footprint without distortion (may extend past edges).
  * `naturalAspect` is width/height of the source image.

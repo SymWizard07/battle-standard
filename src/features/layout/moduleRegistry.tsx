@@ -38,8 +38,9 @@ function ToolOptionsModule() {
 }
 
 function ToolbarModule() {
+  // Split slot is %-height; pin the fixed bar to the viewport bottom of that slot.
   return (
-    <div className="shrink-0 border-t border-slate-700">
+    <div className="flex h-full min-h-0 flex-col justify-end bg-slate-900/95">
       <ToolBar />
     </div>
   );

@@ -2,12 +2,14 @@
  * Run with: npx tsx src/lib/tokenImageFit.test.ts
  */
 import {
+  canonicalFootprintFromAspect,
   coverImageTransform,
   defaultImageTransform,
   isCellRectCenteredOnFootprint,
   isDefaultImageTransform,
   outlineFromCellRect,
   recenterCellRectOnFootprint,
+  scaleAppearanceBetweenFootprints,
   scaleCellRectFromMidEdge,
   translateCellRect,
   nudgeCellRect,
@@ -91,6 +93,37 @@ const start = { offset: { x: 0, y: 0 }, size: { w: 2, h: 1 } };
 {
   const t = defaultImageTransform({ w: 3, h: 2 });
   assert(t.size.w === 3 && t.size.h === 2);
+}
+
+{
+  const square = canonicalFootprintFromAspect(1);
+  assert(nearly(square.w, 1) && nearly(square.h, 1));
+  const wide = canonicalFootprintFromAspect(2);
+  assert(nearly(wide.w, 2) && nearly(wide.h, 1));
+  const tall = canonicalFootprintFromAspect(0.5);
+  assert(nearly(tall.w, 1) && nearly(tall.h, 2));
+}
+
+{
+  const from = { w: 2, h: 1 };
+  const to = { w: 4, h: 2 };
+  const scaled = scaleAppearanceBetweenFootprints(from, to, {
+    imageTransform: { offset: { x: 0.25, y: -0.5 }, size: { w: 2, h: 1 } },
+    outline: {
+      shape: 'rect',
+      offset: { x: 0.1, y: 0.2 },
+      size: { w: 1.5, h: 0.8 },
+    },
+  });
+  assert(nearly(scaled.imageTransform.offset.x, 0.5));
+  assert(nearly(scaled.imageTransform.offset.y, -1));
+  assert(nearly(scaled.imageTransform.size.w, 4));
+  assert(nearly(scaled.imageTransform.size.h, 2));
+  assert(nearly(scaled.outline.offset.x, 0.2));
+  assert(nearly(scaled.outline.offset.y, 0.4));
+  assert(nearly(scaled.outline.size.w, 3));
+  assert(nearly(scaled.outline.size.h, 1.6));
+  assert(scaled.outline.shape === 'rect');
 }
 
 console.log('tokenImageFit.test.ts: ok');

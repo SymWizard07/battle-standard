@@ -6,10 +6,21 @@ import {
   selectionRectFromOpaqueBounds,
   type ImageOpaqueShape,
 } from './imageOpaqueBounds';
-import { outlineToLocalPx } from './tokenImageFit';
+import {
+  defaultImageTransform,
+  defaultOutline,
+  outlineToLocalPx,
+  scaleAppearanceBetweenFootprints,
+} from './tokenImageFit';
 import type { MapCorner } from './mapGeometry';
 import { clampGridSnapStrength, snapTokenTopLeftPlacement } from './gridSnap';
-import type { Point, Token, TokenGridPlacement, TokenOutlineStyle } from './types';
+import type {
+  Point,
+  Token,
+  TokenGridPlacement,
+  TokenImageTransform,
+  TokenOutlineStyle,
+} from './types';
 
 export const MAX_TOKEN_FOOTPRINT_CELLS = 12;
 const MAX_CELLS = MAX_TOKEN_FOOTPRINT_CELLS;
@@ -18,6 +29,35 @@ const MIN_CELLS_FREE = 0.25;
 
 export type TokenFootprint = { w: number; h: number };
 export type TokenScaleCorner = MapCorner;
+
+export type TokenScalePreview = {
+  footprint: TokenFootprint;
+  placement: TokenGridPlacement;
+  imageTransform?: TokenImageTransform;
+  outline?: TokenOutlineStyle;
+};
+
+/** Scale stored appearance cell-units when the token footprint changes. */
+export function scaleTokenAppearanceForFootprint(
+  from: TokenFootprint,
+  to: TokenFootprint,
+  appearance: {
+    imageTransform?: TokenImageTransform | null;
+    outline?: TokenOutlineStyle | null;
+  },
+): Pick<TokenScalePreview, 'imageTransform' | 'outline'> {
+  const hasImg = Boolean(appearance.imageTransform);
+  const hasOutline = Boolean(appearance.outline);
+  if (!hasImg && !hasOutline) return {};
+  const scaled = scaleAppearanceBetweenFootprints(from, to, {
+    imageTransform: appearance.imageTransform ?? defaultImageTransform(from),
+    outline: appearance.outline ?? defaultOutline(from),
+  });
+  return {
+    ...(hasImg ? { imageTransform: scaled.imageTransform } : {}),
+    ...(hasOutline ? { outline: scaled.outline } : {}),
+  };
+}
 
 function minFootprintCells(snap: number): number {
   return snap > 0 ? snap : MIN_CELLS_FREE;
@@ -186,7 +226,18 @@ type MarqueeFractions = {
 function marqueeFractions(
   imageUrl: string | undefined,
   refFootprint: TokenFootprint,
+  outline?: TokenOutlineStyle | null,
 ): MarqueeFractions {
+  // Prefer explicit Appearance outline so drag math matches selection handles.
+  if (outline && refFootprint.w > 0 && refFootprint.h > 0) {
+    return {
+      bx: outline.offset.x / refFootprint.w,
+      by: outline.offset.y / refFootprint.h,
+      bw: Math.max(1e-6, outline.size.w / refFootprint.w),
+      bh: Math.max(1e-6, outline.size.h / refFootprint.h),
+      pad: 2,
+    };
+  }
   const shape = imageUrl ? getCachedOpaqueShape(imageUrl) : undefined;
   const hasImage = Boolean(imageUrl && shape);
   if (hasImage && shape?.kind === 'rect') {
@@ -249,12 +300,13 @@ export function footprintAndPlacementFromCornerDrag(
   imageAspect: number | null,
   selectSnap: number,
   gridOffset: Point,
+  outline?: TokenOutlineStyle | null,
 ): { footprint: TokenFootprint; placement: TokenGridPlacement } {
   const snap = clampGridSnapStrength(selectSnap);
   const minCells = minFootprintCells(snap);
   const minPx = minCells * GRID_SIZE_PX;
   const aspect = imageAspect && imageAspect > 0 ? imageAspect : null;
-  const frac = marqueeFractions(imageUrl, startFootprint);
+  const frac = marqueeFractions(imageUrl, startFootprint, outline);
   const { bw, bh, pad } = frac;
 
   let minX: number;

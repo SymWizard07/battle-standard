@@ -104,6 +104,8 @@ import {
 } from '../lib/tokenLibrary';
 import { inspectTargetFromAssetEntry } from '../lib/importsInspect';
 import { isTemplateTokenAssetId } from '../lib/templateTokenImage';
+import { scaleAppearanceBetweenFootprints } from '../lib/tokenImageFit';
+import type { TokenScalePreview } from '../lib/tokenScale';
 import { captureTokenSheet } from '../lib/tokenSheet';
 import {
   cloneSnapshot,
@@ -202,10 +204,7 @@ interface SelectionState {
   interactionMode: InteractionMode;
   movePreviewPos: TokenGridPlacement | null;
   movePreviewPositions: Record<string, TokenGridPlacement> | null;
-  scalePreviewById: Record<
-    string,
-    { footprint: { w: number; h: number }; placement: TokenGridPlacement }
-  > | null;
+  scalePreviewById: Record<string, TokenScalePreview> | null;
   drawStrokeDragPreview: DrawStroke[] | null;
   ephemeralMeasure: EphemeralMeasurement | null;
   ephemeralDrawText: EphemeralDrawText | null;
@@ -221,10 +220,7 @@ interface SelectionState {
   setMovePreview: (pos: TokenGridPlacement | null) => void;
   setMovePreviewPositions: (positions: Record<string, TokenGridPlacement> | null) => void;
   setScalePreviewById: (
-    previews: Record<
-      string,
-      { footprint: { w: number; h: number }; placement: TokenGridPlacement }
-    > | null,
+    previews: Record<string, TokenScalePreview> | null,
   ) => void;
   startTokenScale: () => void;
   cancelTokenScale: () => void;
@@ -947,6 +943,10 @@ export const useStore = create<AppStore>((set, get) => ({
           footprint: entry.footprint,
           gridPos: entry.placement.gridPos,
           posOffset: entry.placement.posOffset,
+          ...(entry.imageTransform
+            ? { imageTransform: entry.imageTransform }
+            : {}),
+          ...(entry.outline ? { outline: entry.outline } : {}),
         });
       }
     }
@@ -2077,18 +2077,18 @@ export const useStore = create<AppStore>((set, get) => ({
         const tokens = scene.tokens.map((t) => {
           if (t.imageAssetId !== assetId) return t;
           sceneChanged = true;
+          const scaled = scaleAppearanceBetweenFootprints(
+            appearance.footprint,
+            t.footprint,
+            {
+              imageTransform: appearance.imageTransform,
+              outline: appearance.outline,
+            },
+          );
           return {
             ...t,
-            footprint: { ...appearance.footprint },
-            imageTransform: {
-              offset: { ...appearance.imageTransform.offset },
-              size: { ...appearance.imageTransform.size },
-            },
-            outline: {
-              shape: appearance.outline.shape,
-              offset: { ...appearance.outline.offset },
-              size: { ...appearance.outline.size },
-            },
+            imageTransform: scaled.imageTransform,
+            outline: scaled.outline,
           };
         });
         if (sceneChanged) {

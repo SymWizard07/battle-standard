@@ -136,6 +136,11 @@ export interface ImportsInspectTarget {
   footprint: { w: number; h: number };
   imageTransform: TokenImageTransform;
   outline: TokenOutlineStyle;
+  /**
+   * When true, once the image loads the editor reseeds footprint/transform/outline
+   * from natural aspect (unsaved assets only). Cleared after seeding.
+   */
+  needsImageSeed?: boolean;
 }
 
 export interface MapTransform {

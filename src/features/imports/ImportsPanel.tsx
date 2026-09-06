@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { ImportsInspectTarget } from '../../lib/types';
-import { findTokenLibraryEntry } from '../../lib/tokenLibrary';
-import {
-  appearanceFromAssetEntry,
-  appearanceFromToken,
-} from '../../lib/importsInspect';
+import { inspectTargetFromMapToken } from '../../lib/importsInspect';
 import { isTemplateTokenAssetId } from '../../lib/templateTokenImage';
 import {
+  canonicalFootprintFromAspect,
   cellRectFromOutline,
   cellRectFromTransform,
+  defaultImageTransform,
   isCellRectCenteredOnFootprint,
   outlineFromCellRect,
   recenterCellRectOnFootprint,
@@ -118,7 +116,9 @@ export function ImportsPanel() {
     return () => window.clearTimeout(t);
   }, [importsPickError, setImportsPickError]);
 
-  // Consume map eyedropper picks
+  const canonicalSeededAssetId = useRef<string | null>(null);
+
+  // Consume map eyedropper picks — restore last save when present.
   useEffect(() => {
     if (importsPendingPickTokenIds.length === 0 || !campaign || !activeSceneId) return;
     const tokenId = importsPendingPickTokenIds[0]!;
@@ -147,47 +147,22 @@ export function ImportsPanel() {
         (e) => e.kind === 'asset' && e.assetId === token.imageAssetId,
       );
 
-    const base = appearanceFromToken(token);
-    // Prefer library footprint/transforms when token has no custom ones yet
-    if (entry?.kind === 'asset' && !token.imageTransform && !token.outline) {
-      const fromEntry = appearanceFromAssetEntry(entry);
-      setTarget({
-        assetId: token.imageAssetId,
-        name: token.name,
-        scope: campaign.tokenLibrary?.entries.some((e) => e.id === entry.id)
-          ? 'campaign'
-          : 'global',
-        entryId: entry.id,
-        ...fromEntry,
-      });
-    } else {
-      setTarget({
-        assetId: token.imageAssetId,
-        name: token.name,
-        scope: 'map',
-        entryId: entry?.kind === 'asset' ? entry.id : undefined,
-        ...base,
-      });
-    }
+    const inCampaign = Boolean(
+      entry && campaign.tokenLibrary?.entries.some((e) => e.id === entry.id),
+    );
+    canonicalSeededAssetId.current = null;
+    setTarget(
+      inspectTargetFromMapToken(
+        { ...token, imageAssetId: token.imageAssetId },
+        {
+          scope: entry ? (inCampaign ? 'campaign' : 'global') : 'map',
+          entryId: entry?.kind === 'asset' ? entry.id : undefined,
+          libraryEntry: entry?.kind === 'asset' ? entry : undefined,
+        },
+      ),
+    );
     setEditOutline(false);
     focusEditor();
-
-    // Refine outline from opaque pixels when still default rect fill
-    const url = useStore.getState().assetUrls[token.imageAssetId];
-    if (url && !token.outline && !(entry?.kind === 'asset' && entry.outline)) {
-      const image = new window.Image();
-      image.onload = () => {
-        updateTarget((prev) =>
-          prev.assetId === token.imageAssetId
-            ? {
-                ...prev,
-                outline: initialOutlineForImage(url, image, prev.footprint),
-              }
-            : prev,
-        );
-      };
-      image.src = url;
-    }
   }, [
     importsPendingPickTokenIds,
     campaign,
@@ -197,67 +172,50 @@ export function ImportsPanel() {
     setImportsTokenPickActive,
     setTarget,
     setEditOutline,
-    updateTarget,
     focusEditor,
     setImportsPickError,
   ]);
 
-  // Library picks resolve in the store (panel may be unmounted on Tokens tab).
-  // When returning with a default full-footprint outline, refine from opaque pixels.
+  // Unsaved assets only: size editor footprint to natural aspect + outline.
   useEffect(() => {
-    if (!target) return;
-    const o = target.outline;
-    const isDefaultRect =
-      o.shape === 'rect' &&
-      o.offset.x === 0 &&
-      o.offset.y === 0 &&
-      o.size.w === target.footprint.w &&
-      o.size.h === target.footprint.h;
-    if (!isDefaultRect) return;
-    if (target.entryId) {
-      const entry = findTokenLibraryEntry(
-        target.entryId,
-        campaign?.tokenLibrary,
-        globalTokenLibraryLayout,
-      );
-      if (entry?.kind === 'asset' && entry.outline) return;
+    if (!target) {
+      canonicalSeededAssetId.current = null;
+      return;
     }
+    if (!target.needsImageSeed) {
+      canonicalSeededAssetId.current = target.assetId;
+      return;
+    }
+    if (canonicalSeededAssetId.current === target.assetId) return;
     const url = assetUrls[target.assetId];
     if (!url) return;
     let cancelled = false;
     const image = new window.Image();
     image.onload = () => {
       if (cancelled) return;
-      updateTarget((prev) => {
-        if (prev.assetId !== target.assetId) return prev;
-        const stillDefault =
-          prev.outline.shape === 'rect' &&
-          prev.outline.offset.x === 0 &&
-          prev.outline.offset.y === 0 &&
-          prev.outline.size.w === prev.footprint.w &&
-          prev.outline.size.h === prev.footprint.h;
-        if (!stillDefault) return prev;
-        return {
-          ...prev,
-          outline: initialOutlineForImage(url, image, prev.footprint),
-        };
-      });
+      if (canonicalSeededAssetId.current === target.assetId) return;
+      if (image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+      canonicalSeededAssetId.current = target.assetId;
+      const aspect = image.naturalWidth / image.naturalHeight;
+      const footprint = canonicalFootprintFromAspect(aspect);
+      updateTarget((prev) =>
+        prev.assetId === target.assetId && prev.needsImageSeed
+          ? {
+              ...prev,
+              footprint,
+              imageTransform: defaultImageTransform(footprint),
+              outline: initialOutlineForImage(url, image, footprint),
+              needsImageSeed: false,
+            }
+          : prev,
+      );
+      setDirty(false);
     };
     image.src = url;
     return () => {
       cancelled = true;
     };
-  }, [
-    target?.assetId,
-    target?.entryId,
-    target?.footprint.w,
-    target?.footprint.h,
-    target?.outline,
-    assetUrls,
-    campaign?.tokenLibrary,
-    globalTokenLibraryLayout,
-    updateTarget,
-  ]);
+  }, [target?.assetId, target?.needsImageSeed, assetUrls, updateTarget, setDirty]);
 
   // Esc cancels pick modes
   useEffect(() => {

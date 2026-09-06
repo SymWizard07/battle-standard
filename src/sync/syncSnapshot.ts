@@ -1,5 +1,6 @@
 import { mergeDrawStrokeDragPreview } from '../lib/drawShapes';
 import { defaultPlayerColor } from '../lib/playerColor';
+import type { TokenScalePreview } from '../lib/tokenScale';
 import type {
   Campaign,
   DrawStroke,
@@ -14,10 +15,7 @@ export type LiveSyncState = {
   campaign: Campaign | null;
   activeSceneId: SceneId | null;
   movePreviewPositions: Record<string, TokenGridPlacement> | null;
-  scalePreviewById: Record<
-    string,
-    { footprint: { w: number; h: number }; placement: TokenGridPlacement }
-  > | null;
+  scalePreviewById: Record<string, TokenScalePreview> | null;
   drawStrokeDragPreview: DrawStroke[] | null;
   ephemeralMeasure: EphemeralMeasurement | null;
   ephemeralDrawText: EphemeralDrawText | null;
@@ -101,6 +99,10 @@ export function buildCampaignSyncSnapshot(state: LiveSyncState): Campaign | null
           footprint: preview.footprint,
           gridPos: preview.placement.gridPos,
           posOffset: preview.placement.posOffset,
+          ...(preview.imageTransform
+            ? { imageTransform: preview.imageTransform }
+            : {}),
+          ...(preview.outline ? { outline: preview.outline } : {}),
         };
       }),
     };

@@ -17,6 +17,7 @@ import {
   imageTransformToLocalPx,
   outlineToLocalPx,
 } from '../../lib/tokenImageFit';
+import type { TokenScalePreview } from '../../lib/tokenScale';
 import type { Token, TokenGridPlacement } from '../../lib/types';
 import { TokenStyledNameText } from './TokenStyledNameText';
 import { useStore } from '../../store/useStore';
@@ -114,10 +115,7 @@ interface Props {
   peerTokenSelectionColors?: ReadonlyMap<string, string>;
   sessionSelectionColor: string;
   movePreviewPositions: Record<string, TokenGridPlacement> | null;
-  scalePreviewById: Record<
-    string,
-    { footprint: { w: number; h: number }; placement: TokenGridPlacement }
-  > | null;
+  scalePreviewById: Record<string, TokenScalePreview> | null;
   /** Hide tokens being dragged when the pointer leaves the map. */
   hideMovingOffMap?: boolean;
   /** GM view: render player-hidden tokens at reduced opacity. */
@@ -426,6 +424,16 @@ export function TokenLayer({
         const previewPlacement =
           scalePreview?.placement ?? movePreviewPositions?.[token.id] ?? null;
         const previewFootprint = scalePreview?.footprint ?? null;
+        const renderToken =
+          scalePreview?.imageTransform || scalePreview?.outline
+            ? {
+                ...token,
+                ...(scalePreview.imageTransform
+                  ? { imageTransform: scalePreview.imageTransform }
+                  : {}),
+                ...(scalePreview.outline ? { outline: scalePreview.outline } : {}),
+              }
+            : token;
         const movingSelected = previewPlacement != null && selectedSet.has(token.id);
         const isSelected = selectedSet.has(token.id);
         if (hideMovingOffMap && movingSelected && !scalePreview) return null;
@@ -438,7 +446,7 @@ export function TokenLayer({
           onMouseLeave={() => onTokenHover(null)}
         >
           <TokenNode
-            token={token}
+            token={renderToken}
             assetUrls={assetUrls}
             selected={isSelected}
             highlightColor={measureHighlightColors?.get(token.id)}
@@ -494,10 +502,9 @@ export const ConnectedTokenLayer = memo(function ConnectedTokenLayer(
 
   const { mergedMovePreviews, mergedScalePreviews } = useMemo(() => {
     const move: Record<string, TokenGridPlacement> = { ...(movePreviewPositions ?? {}) };
-    const scale: Record<
-      string,
-      { footprint: { w: number; h: number }; placement: TokenGridPlacement }
-    > = { ...(scalePreviewById ?? {}) };
+    const scale: Record<string, TokenScalePreview> = {
+      ...(scalePreviewById ?? {}),
+    };
 
     for (const [id, placement] of Object.entries(remoteMotion.tokenPlacements)) {
       if (movePreviewPositions?.[id] || scalePreviewById?.[id]) continue;

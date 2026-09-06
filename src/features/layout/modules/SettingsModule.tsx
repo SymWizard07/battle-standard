@@ -16,7 +16,7 @@ export function SettingsModule() {
   const edgeBorder = sharedEdgesBorderClass(sharedEdges);
 
   return (
-    <div className={`safe-bottom flex h-full items-center bg-slate-900 p-2 md:p-3 ${edgeBorder}`}>
+    <div className={`safe-bottom flex h-full items-end bg-slate-900 p-2 md:p-3 ${edgeBorder}`}>
       <div className="flex w-full gap-2">
         <CampaignsBackButton className="min-h-11 min-w-11 bg-slate-800 hover:border-slate-600" />
         {compact ? (

@@ -11,6 +11,7 @@ export const DRAW_SHAPE_ORDER = [
   'cone',
   'rect',
   'sphere',
+  'text',
   'erase',
 ] as const satisfies readonly DrawToolShape[];
 
@@ -25,8 +26,8 @@ function digitIndex4(key: string, code: string): number | null {
   return digitIndex(key, code, 4);
 }
 
-function digitIndex6(key: string, code: string): number | null {
-  return digitIndex(key, code, 6);
+function digitIndex7(key: string, code: string): number | null {
+  return digitIndex(key, code, 7);
 }
 
 export function fogShapeForKey(key: string, code: string): FogShapeId | null {
@@ -48,6 +49,6 @@ export function isShiftKey(key: string): boolean {
 }
 
 export function drawShapeForKey(key: string, code: string): DrawToolShape | null {
-  const idx = digitIndex6(key, code);
+  const idx = digitIndex7(key, code);
   return idx == null ? null : (DRAW_SHAPE_ORDER[idx] ?? null);
 }

@@ -9,12 +9,26 @@ import {
   setTabsActive as applyTabsActive,
   addModuleAsTab,
   moveTabBetweenGroups,
+  findModuleInLayout,
 } from './layoutTreeUtils';
 import type { CollapseDirection } from './schema/layoutSchema';
 import type { DeviceClass, LayoutNode, LayoutProfiles, ModuleId } from './schema/layoutSchema';
-import { cloneLayout, ensureSettingsModule, repairLayoutTree, validateLayout, validateLayoutProfiles } from './schema/layoutSchema';
+import {
+  cloneLayout,
+  sanitizeLayoutProfile,
+  repairLayoutTree,
+  validateLayoutProfiles,
+} from './schema/layoutSchema';
 
 const STORAGE_KEY = 'ui.layout.v1';
+
+/** Same builder path as Reset desktop / new-user defaults. */
+function freshDefaultProfile(device: DeviceClass): LayoutNode {
+  return sanitizeLayoutProfile(
+    defaultLayoutForDevice(device),
+    defaultLayoutForDevice(device),
+  );
+}
 
 function loadLayoutProfiles(): LayoutProfiles {
   try {
@@ -23,9 +37,9 @@ function loadLayoutProfiles(): LayoutProfiles {
     const parsed = JSON.parse(raw) as LayoutProfiles;
     if (parsed.desktop && parsed.tablet && parsed.mobile) {
       const profiles: LayoutProfiles = {
-        desktop: repairLayoutTree(ensureSettingsModule(cloneLayout(parsed.desktop))),
-        tablet: repairLayoutTree(ensureSettingsModule(cloneLayout(parsed.tablet))),
-        mobile: repairLayoutTree(ensureSettingsModule(cloneLayout(parsed.mobile))),
+        desktop: sanitizeLayoutProfile(parsed.desktop, defaultLayoutForDevice('desktop')),
+        tablet: sanitizeLayoutProfile(parsed.tablet, defaultLayoutForDevice('tablet')),
+        mobile: sanitizeLayoutProfile(parsed.mobile, defaultLayoutForDevice('mobile')),
       };
       persistLayoutProfiles(profiles);
       return profiles;
@@ -44,16 +58,6 @@ function persistLayoutProfiles(profiles: LayoutProfiles): void {
   }
 }
 
-function sanitizeProfile(node: LayoutNode, device: DeviceClass): LayoutNode {
-  const repaired = repairLayoutTree(cloneLayout(node));
-  const err = validateLayout(repaired);
-  if (err) {
-    console.warn(`Layout validation failed for ${device}: ${err}`);
-    return defaultLayoutForDevice(device);
-  }
-  return repaired;
-}
-
 interface LayoutState {
   layoutProfiles: LayoutProfiles;
   editorDraft: LayoutProfiles | null;
@@ -63,6 +67,8 @@ interface LayoutState {
   setLayoutProfile: (device: DeviceClass, tree: LayoutNode) => void;
   updateSplitSizes: (device: DeviceClass, path: number[], sizes: number[]) => void;
   setTabsActive: (device: DeviceClass, path: number[], activeTabId: string) => void;
+  /** Activate a module wherever it lives (switches its tab group if needed). */
+  activateModule: (device: DeviceClass, moduleId: ModuleId) => boolean;
   addModuleToLayout: (device: DeviceClass, path: number[], moduleId: ModuleId) => void;
   moveTab: (
     device: DeviceClass,
@@ -87,7 +93,10 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   editorDevice: 'desktop',
 
   setLayoutProfile: (device, tree) => {
-    const sanitized = sanitizeProfile(cloneLayout(tree), device);
+    const sanitized = sanitizeLayoutProfile(
+      cloneLayout(tree),
+      defaultLayoutForDevice(device),
+    );
     const layoutProfiles = { ...get().layoutProfiles, [device]: sanitized };
     persistLayoutProfiles(layoutProfiles);
     set({ layoutProfiles, layoutMountKey: get().layoutMountKey + 1 });
@@ -127,6 +136,17 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     set({ layoutProfiles });
   },
 
+  activateModule: (device, moduleId) => {
+    const draft = get().editorDraft;
+    const tree = draft?.[device] ?? get().layoutProfiles[device];
+    const loc = findModuleInLayout(tree, moduleId);
+    if (!loc) return false;
+    if (loc.kind === 'tabs') {
+      get().setTabsActive(device, loc.path, loc.tabId);
+    }
+    return true;
+  },
+
   addModuleToLayout: (device, path, moduleId) => {
     const draft = get().editorDraft;
     if (draft) {
@@ -154,7 +174,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   },
 
   resetLayoutProfile: (device) => {
-    const next = sanitizeProfile(defaultLayoutForDevice(device), device);
+    const next = freshDefaultProfile(device);
     const layoutProfiles = { ...get().layoutProfiles, [device]: next };
     persistLayoutProfiles(layoutProfiles);
     const draft = get().editorDraft;
@@ -216,9 +236,9 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const err = validateLayoutProfiles(draft);
     if (err) return false;
     const layoutProfiles: LayoutProfiles = {
-      desktop: sanitizeProfile(draft.desktop, 'desktop'),
-      tablet: sanitizeProfile(draft.tablet, 'tablet'),
-      mobile: sanitizeProfile(draft.mobile, 'mobile'),
+      desktop: sanitizeLayoutProfile(draft.desktop, defaultLayoutForDevice('desktop')),
+      tablet: sanitizeLayoutProfile(draft.tablet, defaultLayoutForDevice('tablet')),
+      mobile: sanitizeLayoutProfile(draft.mobile, defaultLayoutForDevice('mobile')),
     };
     persistLayoutProfiles(layoutProfiles);
     set({

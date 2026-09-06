@@ -29,9 +29,22 @@ export function useSnappingSplitHandlers({
 }: Options) {
   const prevLayoutRef = useRef<Record<string, number>>({});
   const snappingRef = useRef(false);
+  /** Skip snap while collapse/expand applies an exact group layout. */
+  const programmaticLayoutRef = useRef(false);
 
   const syncPrevLayout = useCallback((layout: Record<string, number>) => {
     prevLayoutRef.current = layout;
+  }, []);
+
+  const runProgrammaticLayout = useCallback((apply: () => void) => {
+    programmaticLayoutRef.current = true;
+    try {
+      apply();
+    } finally {
+      requestAnimationFrame(() => {
+        programmaticLayoutRef.current = false;
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -63,6 +76,12 @@ export function useSnappingSplitHandlers({
       if (snappingRef.current) {
         snappingRef.current = false;
         prevLayoutRef.current = layout;
+        return;
+      }
+
+      if (programmaticLayoutRef.current) {
+        prevLayoutRef.current = layout;
+        onSnapSizeMatch?.([]);
         return;
       }
 
@@ -106,5 +125,5 @@ export function useSnappingSplitHandlers({
     [onCommit, onSnapSizeMatch],
   );
 
-  return { onLayoutChange, onLayoutChanged, syncPrevLayout };
+  return { onLayoutChange, onLayoutChanged, syncPrevLayout, runProgrammaticLayout };
 }

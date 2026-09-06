@@ -7,13 +7,17 @@ import { usePasteTokenImage } from '../hooks/usePasteTokenImage';
 import { formatDocumentTitle, useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useGlobalAssets } from '../hooks/useGlobalAssets';
 import { loadCampaign } from '../lib/db';
+import { shouldIgnoreGlobalHotkey } from '../lib/keyboardTarget';
 import { preferSyncCampaignFromDisk } from '../lib/companion/companionStorage';
 import { isMapAssetId } from '../lib/campaignAssets';
 import { screenToGridCell } from '../lib/grid';
 import { consumePendingJoin } from '../sync/sessionReconnect';
 import { joinRoom, tryRestoreSession } from '../sync/syncProvider';
 import { ensureTemplateTokenAsset } from '../lib/templateTokenImage';
+import { findTokenLibraryEntry } from '../lib/tokenLibrary';
+import { resolveTokenSheetForPlace } from '../lib/tokenSheet';
 import { useActiveScene, useStore } from '../store/useStore';
+import type { Token } from '../lib/types';
 
 export function CampaignPage() {
   const { campaignId } = useParams<{ campaignId: string }>();
@@ -26,6 +30,7 @@ export function CampaignPage() {
   const stageX = useStore((s) => s.x);
   const stageY = useStore((s) => s.y);
   const addToken = useStore((s) => s.addToken);
+  const globalTokenLibraryLayout = useStore((s) => s.globalTokenLibraryLayout);
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
   const registerAssetUrl = useStore((s) => s.registerAssetUrl);
@@ -39,9 +44,8 @@ export function CampaignPage() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+      if (shouldIgnoreGlobalHotkey(e.target)) return;
+      if (useStore.getState().ephemeralDrawText) return;
 
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
@@ -142,13 +146,46 @@ export function CampaignPage() {
     const cell = screenToGridCell(screen, { x: stageX, y: stageY }, scale);
     const name = e.dataTransfer.getData('token-name') || 'Token';
 
+    const entryId = e.dataTransfer.getData('token-library-entry-id');
+    const libraryEntry = entryId
+      ? findTokenLibraryEntry(entryId, campaign.tokenLibrary, globalTokenLibraryLayout)
+      : undefined;
+    const sheetFields: Partial<Token> = libraryEntry?.sheet
+      ? resolveTokenSheetForPlace(libraryEntry.sheet)
+      : {};
+
     const assetId = e.dataTransfer.getData('token-asset-id');
     if (assetId) {
       if (isMapAssetId(assetId, campaign)) return;
+      const appearance =
+        libraryEntry?.kind === 'asset'
+          ? {
+              ...(libraryEntry.footprint ? { footprint: { ...libraryEntry.footprint } } : {}),
+              ...(libraryEntry.imageTransform
+                ? {
+                    imageTransform: {
+                      offset: { ...libraryEntry.imageTransform.offset },
+                      size: { ...libraryEntry.imageTransform.size },
+                    },
+                  }
+                : {}),
+              ...(libraryEntry.outline
+                ? {
+                    outline: {
+                      shape: libraryEntry.outline.shape,
+                      offset: { ...libraryEntry.outline.offset },
+                      size: { ...libraryEntry.outline.size },
+                    },
+                  }
+                : {}),
+            }
+          : {};
       addToken(activeSceneId, {
         name: name.replace(/\.[^.]+$/, ''),
         imageAssetId: assetId,
         gridPos: cell,
+        ...appearance,
+        ...sheetFields,
       });
       return;
     }
@@ -162,6 +199,7 @@ export function CampaignPage() {
             imageAssetId: templateAssetId,
             color: templateColor,
             gridPos: cell,
+            ...sheetFields,
           });
         },
       );
@@ -184,6 +222,7 @@ export function CampaignPage() {
         color,
         gridPos: cell,
         footprint,
+        ...sheetFields,
       });
     }
   };

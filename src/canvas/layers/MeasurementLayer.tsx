@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { Circle, Group, Line, Rect } from 'react-konva';
 import { ConeShape } from '../ConeShape';
-import { MeasureLabel } from '../MeasureLabel';
+import { MeasureLabel, measureLabelProximityOpacity } from '../MeasureLabel';
 import {
   cube5eIncludedCells,
   gridCellsUnionBoundarySegments,
@@ -30,27 +30,31 @@ import {
   sphereCenterWorld,
   sphereRadiusWorld,
 } from '../../lib/drawShapes';
+import { worldToScreen } from '../../lib/grid';
 import { useStore } from '../../store/useStore';
 
 /** Debug overlay colors when VTT + 5e are shown together. */
 const DEBUG_VTT_COLOR = '#fbbf24';
 const DEBUG_5E_COLOR = '#38bdf8';
-const MEASURE_ORIGIN_RADIUS = 3;
+const MEASURE_ORIGIN_RADIUS_PX = 3;
 
 function MeasureOriginDot({
   origin,
   color,
   opacity,
+  viewScale,
 }: {
   origin: Point;
   color: string;
   opacity: number;
+  viewScale: number;
 }) {
+  const scale = Math.max(viewScale, 0.05);
   return (
     <Circle
       x={origin.x}
       y={origin.y}
-      radius={MEASURE_ORIGIN_RADIUS}
+      radius={MEASURE_ORIGIN_RADIUS_PX / scale}
       fill={color}
       opacity={opacity}
       listening={false}
@@ -306,6 +310,7 @@ function renderMeasurement(
   key: string,
   activeStyle: MeasureDisplayStyle,
   debugDualView: boolean,
+  viewScale: number,
 ) {
   const origin = measureShapeOrigin(kind, params);
   let body: ReactNode;
@@ -321,7 +326,7 @@ function renderMeasurement(
   return (
     <Group key={key} listening={false}>
       {body}
-      <MeasureOriginDot origin={origin} color={color} opacity={opacity} />
+      <MeasureOriginDot origin={origin} color={color} opacity={opacity} viewScale={viewScale} />
     </Group>
   );
 }
@@ -332,7 +337,7 @@ export function MeasurementLayer({
   remoteEphemeral = null,
   alternatingDiagonals: _alternatingDiagonals,
   debugDualView = false,
-  viewScale: _viewScale,
+  viewScale,
   fadingMeasurements,
   sessionColor,
 }: Props) {
@@ -345,7 +350,7 @@ export function MeasurementLayer({
     );
     const opacity = fadingMeasurements?.[m.id] ?? 1;
     items.push(
-      renderMeasurement(m.kind, m.params, m.color, opacity, m.id, style, debugDualView),
+      renderMeasurement(m.kind, m.params, m.color, opacity, m.id, style, debugDualView, viewScale),
     );
   }
 
@@ -363,6 +368,7 @@ export function MeasurementLayer({
         'ephemeral',
         style,
         debugDualView,
+        viewScale,
       ),
     );
   }
@@ -382,6 +388,7 @@ export function MeasurementLayer({
         'remote-ephemeral',
         style,
         debugDualView,
+        viewScale,
       ),
     );
   }
@@ -396,18 +403,31 @@ export function MeasurementLabelsLayer({
   remoteEphemeral = null,
   alternatingDiagonals,
   viewScale,
+  stagePos,
+  pointerScreen,
   fadingMeasurements,
   onDismissMeasurement,
 }: Pick<
   Props,
   'measurements' | 'ephemeral' | 'remoteEphemeral' | 'alternatingDiagonals' | 'viewScale' | 'fadingMeasurements'
 > & {
+  stagePos: Point;
+  /** Cursor in stage/container CSS pixels; null when off the map. */
+  pointerScreen: Point | null;
   onDismissMeasurement?: (id: string) => void;
 }) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const role = useStore((s) => s.role);
   const playerName = useStore((s) => s.playerName);
-  const labels: Array<{ key: string; opacity: number; text: string; x: number; y: number; dismissible: boolean }> = [];
+  const labels: Array<{
+    key: string;
+    opacity: number;
+    text: string;
+    x: number;
+    y: number;
+    dismissible: boolean;
+    forceSolid?: boolean;
+  }> = [];
 
   for (const m of measurements) {
     if (!isValidMeasurePreview(m.kind, m.params)) continue;
@@ -424,7 +444,15 @@ export function MeasurementLabelsLayer({
 
   if (ephemeral && isValidMeasurePreview(ephemeral.kind, ephemeral.params)) {
     const info = getMeasureLabelInfo(ephemeral.kind, ephemeral.params, alternatingDiagonals);
-    if (info) labels.push({ key: 'ephemeral', opacity: ephemeral.opacity, dismissible: false, ...info });
+    if (info) {
+      labels.push({
+        key: 'ephemeral',
+        opacity: ephemeral.opacity,
+        dismissible: false,
+        forceSolid: true,
+        ...info,
+      });
+    }
   }
 
   if (
@@ -439,6 +467,7 @@ export function MeasurementLabelsLayer({
         key: 'remote-ephemeral',
         opacity: remote.opacity,
         dismissible: false,
+        forceSolid: true,
         ...info,
       });
     }
@@ -446,23 +475,36 @@ export function MeasurementLabelsLayer({
 
   return (
     <Group>
-      {labels.map(({ key, opacity, text, x, y, dismissible }) => (
-        <Group key={key} opacity={opacity} listening={dismissible}>
-          <MeasureLabel
-            x={x}
-            y={y}
-            text={text}
-            viewScale={viewScale}
-            dismissible={dismissible}
-            hovered={dismissible && hoveredId === key}
-            onHoverChange={(hovered) => {
-              if (hovered) setHoveredId(key);
-              else setHoveredId((prev) => (prev === key ? null : prev));
-            }}
-            onDismiss={() => onDismissMeasurement?.(key)}
-          />
-        </Group>
-      ))}
+      {labels.map(({ key, opacity: baseOpacity, text, x, y, dismissible, forceSolid }) => {
+        const hovered = dismissible && hoveredId === key;
+        const screen = worldToScreen({ x, y }, stagePos, viewScale);
+        const dist =
+          pointerScreen == null
+            ? null
+            : Math.hypot(pointerScreen.x - screen.x, pointerScreen.y - screen.y);
+        const proximity = measureLabelProximityOpacity(dist, {
+          forceSolid: forceSolid || hovered,
+        });
+        const opacity = baseOpacity * proximity;
+        return (
+          <Group key={key} listening={dismissible && opacity > 0.2}>
+            <MeasureLabel
+              x={x}
+              y={y}
+              text={text}
+              viewScale={viewScale}
+              opacity={opacity}
+              dismissible={dismissible}
+              hovered={hovered}
+              onHoverChange={(next) => {
+                if (next) setHoveredId(key);
+                else setHoveredId((prev) => (prev === key ? null : prev));
+              }}
+              onDismiss={() => onDismissMeasurement?.(key)}
+            />
+          </Group>
+        );
+      })}
     </Group>
   );
 }

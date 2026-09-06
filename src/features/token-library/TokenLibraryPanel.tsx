@@ -7,6 +7,7 @@ import { newId } from '../../lib/ids';
 import {
   IMPORT_GROUP_ID,
   addAssetEntryToGroup,
+  canAcceptMapTokenDrop,
   defaultTokenLibraryLayout,
 } from '../../lib/tokenLibrary';
 import type { TokenLibraryLayout } from '../../lib/types';
@@ -74,7 +75,7 @@ export function TokenLibraryPanel({ variant, open, onClose }: Props) {
       cursor = 'not-allowed';
     } else if (tokenLibraryDropTargetGroupId) {
       const group = layout.groups.find((g) => g.id === tokenLibraryDropTargetGroupId);
-      if (group?.kind === 'templates') cursor = 'not-allowed';
+      if (!group || !canAcceptMapTokenDrop(group)) cursor = 'not-allowed';
       else cursor = 'copy';
     }
 
@@ -146,11 +147,24 @@ export function TokenLibraryPanel({ variant, open, onClose }: Props) {
     }
   };
 
+  const libraryEntryPickActive = useStore((s) => s.libraryEntryPickActive);
+  const setLibraryEntryPickActive = useStore((s) => s.setLibraryEntryPickActive);
+
+  useEffect(() => {
+    if (!libraryEntryPickActive) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setLibraryEntryPickActive(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [libraryEntryPickActive, setLibraryEntryPickActive]);
+
   const panel = (
     <div
       ref={panelRef}
       data-token-library=""
-      className={`flex h-full flex-col bg-slate-900 ${
+      className={`relative flex h-full flex-col bg-slate-900 ${
         draggingFromMap && tokenLibraryDragOver ? 'cursor-grabbing' : ''
       }`}
       onPointerLeave={() => {
@@ -167,9 +181,15 @@ export function TokenLibraryPanel({ variant, open, onClose }: Props) {
         }
       }}
     >
+      {libraryEntryPickActive && (
+        <div
+          className="pointer-events-none absolute inset-0 z-40 box-border border-2 border-sky-400"
+          aria-hidden
+        />
+      )}
       {variant !== 'inline' && (
         <header className="safe-top flex items-center justify-between border-b border-slate-700 px-3 py-2">
-          <h2 className="text-sm font-semibold">Tokens</h2>
+          <h2 className="text-sm font-semibold">Token Library</h2>
           <div className="flex gap-1">
             {variant === 'sheet' && (
               <button

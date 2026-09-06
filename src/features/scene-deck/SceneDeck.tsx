@@ -262,7 +262,7 @@ export function SceneDeck({
 
   if (variant === 'inline' || variant === 'module') {
     return (
-      <div className="flex h-full w-full flex-col overflow-hidden border-slate-700 md:border-r">
+      <div className="flex h-full w-full flex-col overflow-hidden">
         {panel}
       </div>
     );

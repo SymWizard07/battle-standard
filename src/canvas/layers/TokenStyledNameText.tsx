@@ -49,56 +49,53 @@ function ScrambledKonvaText({
   );
 }
 
-function renderPiece(
+/** One host Group per piece — react-konva cannot append arrays/fragments as children. */
+function NamePiece({
+  piece,
+  fontSize,
+}: {
   piece: {
     text: string;
     x: number;
     width: number;
     segment: TokenNameSegment;
-  },
-  key: string,
-  fontSize: number,
-) {
+  };
+  fontSize: number;
+}) {
   const fill = piece.segment.color;
   const fontStyle = konvaFontStyle(piece.segment);
-  const textY = 0;
-  const underlineY = textY + fontSize * 0.92;
-  const strikeY = textY + fontSize * 0.55;
-  const nodes = [
-    <ScrambledKonvaText
-      key={`${key}-text`}
-      x={piece.x}
-      y={textY}
-      text={piece.text}
-      obfuscated={piece.segment.obfuscated}
-      fontSize={fontSize}
-      fontStyle={fontStyle}
-      fill={fill}
-    />,
-  ];
-  if (piece.segment.underline) {
-    nodes.push(
-      <Line
-        key={`${key}-underline`}
-        points={[piece.x, underlineY, piece.x + piece.width, underlineY]}
-        stroke={fill}
-        strokeWidth={Math.max(1, fontSize * 0.07)}
-        listening={false}
-      />,
-    );
-  }
-  if (piece.segment.strikethrough) {
-    nodes.push(
-      <Line
-        key={`${key}-strike`}
-        points={[piece.x, strikeY, piece.x + piece.width, strikeY]}
-        stroke={fill}
-        strokeWidth={Math.max(1, fontSize * 0.07)}
-        listening={false}
-      />,
-    );
-  }
-  return nodes;
+  const underlineY = fontSize * 0.92;
+  const strikeY = fontSize * 0.55;
+
+  return (
+    <Group listening={false}>
+      <ScrambledKonvaText
+        x={piece.x}
+        y={0}
+        text={piece.text}
+        obfuscated={piece.segment.obfuscated}
+        fontSize={fontSize}
+        fontStyle={fontStyle}
+        fill={fill}
+      />
+      {piece.segment.underline ? (
+        <Line
+          points={[piece.x, underlineY, piece.x + piece.width, underlineY]}
+          stroke={fill}
+          strokeWidth={Math.max(1, fontSize * 0.07)}
+          listening={false}
+        />
+      ) : null}
+      {piece.segment.strikethrough ? (
+        <Line
+          points={[piece.x, strikeY, piece.x + piece.width, strikeY]}
+          stroke={fill}
+          strokeWidth={Math.max(1, fontSize * 0.07)}
+          listening={false}
+        />
+      ) : null}
+    </Group>
+  );
 }
 
 export function TokenStyledNameText({
@@ -109,17 +106,17 @@ export function TokenStyledNameText({
   defaultFill = DEFAULT_TOKEN_NAME_COLOR,
 }: Props) {
   const lines = useMemo(
-    () => layoutTokenNameCentered(raw, width, height, fontSize, defaultFill),
+    () => layoutTokenNameCentered(raw ?? '', width, height, fontSize, defaultFill),
     [raw, width, height, fontSize, defaultFill],
   );
 
   return (
     <Group listening={false}>
-      {lines.flatMap((line, lineIndex) => (
+      {lines.map((line, lineIndex) => (
         <Group key={lineIndex} y={line.y} listening={false}>
-          {line.pieces.flatMap((piece, pieceIndex) =>
-            renderPiece(piece, `${lineIndex}-${pieceIndex}`, fontSize),
-          )}
+          {line.pieces.map((piece, pieceIndex) => (
+            <NamePiece key={pieceIndex} piece={piece} fontSize={fontSize} />
+          ))}
         </Group>
       ))}
     </Group>

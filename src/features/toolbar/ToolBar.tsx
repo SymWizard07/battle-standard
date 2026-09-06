@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { SyncStatus, ToolMode } from '../../lib/types';
+import { shouldIgnoreGlobalHotkey } from '../../lib/keyboardTarget';
 import { seesAsPlayer, useStore } from '../../store/useStore';
 import { FOG_ICON_WIDTH_PX, TOOLBAR_HEIGHT_PX } from './toolbarOverlayMetrics';
 import { SquareGridOverlay } from './SquareGridOverlay';
@@ -224,9 +225,9 @@ export function ToolBar() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
 
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+      if (shouldIgnoreGlobalHotkey(e.target)) return;
+      // Typing on the map with the draw text tool — don't steal keys for tool hotkeys.
+      if (useStore.getState().ephemeralDrawText) return;
 
       const tool = toolForToolbarHotkey(e.key);
       if (!tool || !isToolbarToolVisible(tool, asPlayer)) return;

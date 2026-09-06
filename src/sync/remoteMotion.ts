@@ -13,6 +13,7 @@ import {
 import { deepEqual } from '../lib/history/equal';
 import type {
   DrawStroke,
+  EphemeralDrawText,
   EphemeralMeasurement,
   Point,
   Scene,
@@ -33,6 +34,7 @@ type MotionTrack<T> = {
 export type RemoteEphemeralMeasure = {
   measure: EphemeralMeasurement;
   color: string;
+  visibleToPlayers: boolean;
 };
 
 export type RemoteMotionDisplay = {
@@ -40,6 +42,7 @@ export type RemoteMotionDisplay = {
   tokenFootprints: Record<string, { w: number; h: number }>;
   drawStrokes: Record<string, DrawStroke>;
   ephemeralMeasure: RemoteEphemeralMeasure | null;
+  ephemeralDrawText: EphemeralDrawText | null;
 };
 
 type TokenMotionValue = {
@@ -53,7 +56,9 @@ const SNAP_WORLD_PX = 0.75;
 let tokenTracks = new Map<string, MotionTrack<TokenMotionValue>>();
 let strokeTracks = new Map<string, MotionTrack<DrawStroke>>();
 let ephemeralTrack: MotionTrack<EphemeralMeasurement> | null = null;
+let ephemeralDrawTextTrack: MotionTrack<EphemeralDrawText> | null = null;
 let ephemeralColor = '#94a3b8';
+let ephemeralVisibleToPlayers = true;
 let rafId: number | null = null;
 let listeners = new Set<() => void>();
 let display: RemoteMotionDisplay = {
@@ -61,6 +66,7 @@ let display: RemoteMotionDisplay = {
   tokenFootprints: {},
   drawStrokes: {},
   ephemeralMeasure: null,
+  ephemeralDrawText: null,
 };
 
 function notify(): void {
@@ -215,6 +221,7 @@ export function feedRemoteSceneMotion(
 
   if (liveSync && liveSync.sceneId === sceneId) {
     if (liveSync.sessionColor) ephemeralColor = liveSync.sessionColor;
+    ephemeralVisibleToPlayers = liveSync.measureVisibleToPlayers !== false;
     if (liveSync.ephemeralMeasure === null) {
       ephemeralTrack = null;
     } else if (liveSync.ephemeralMeasure) {
@@ -224,6 +231,19 @@ export function feedRemoteSceneMotion(
       pushSample(
         ephemeralTrack,
         liveSync.ephemeralMeasure,
+        now,
+        (a, b) => deepEqual(a, b),
+      );
+    }
+    if (liveSync.ephemeralDrawText === null) {
+      ephemeralDrawTextTrack = null;
+    } else if (liveSync.ephemeralDrawText) {
+      if (!ephemeralDrawTextTrack) {
+        ephemeralDrawTextTrack = { samples: [], display: liveSync.ephemeralDrawText };
+      }
+      pushSample(
+        ephemeralDrawTextTrack,
+        liveSync.ephemeralDrawText,
         now,
         (a, b) => deepEqual(a, b),
       );
@@ -275,12 +295,27 @@ function rebuildDisplay(now: number, gridOffset: Point): void {
   if (ephemeralTrack && ephemeralTrack.samples.length > 0) {
     const value = interpolateAtTime(ephemeralTrack, now, interpolateEphemeralMeasurement);
     if (value) {
-      ephemeralMeasure = { measure: value, color: ephemeralColor };
+      ephemeralMeasure = {
+        measure: value,
+        color: ephemeralColor,
+        visibleToPlayers: ephemeralVisibleToPlayers,
+      };
       ephemeralTrack.display = value;
     }
   }
 
-  display = { tokenPlacements, tokenFootprints, drawStrokes, ephemeralMeasure };
+  let ephemeralDrawText: EphemeralDrawText | null = null;
+  if (ephemeralDrawTextTrack && ephemeralDrawTextTrack.samples.length > 0) {
+    const value = interpolateAtTime(ephemeralDrawTextTrack, now, (a, b, t) =>
+      t < 0.5 ? a : b,
+    );
+    if (value) {
+      ephemeralDrawText = value;
+      ephemeralDrawTextTrack.display = value;
+    }
+  }
+
+  display = { tokenPlacements, tokenFootprints, drawStrokes, ephemeralMeasure, ephemeralDrawText };
 }
 
 function tick(now: number): void {
@@ -304,11 +339,14 @@ export function stopRemoteMotion(): void {
   tokenTracks.clear();
   strokeTracks.clear();
   ephemeralTrack = null;
+  ephemeralDrawTextTrack = null;
+  ephemeralVisibleToPlayers = true;
   display = {
     tokenPlacements: {},
     tokenFootprints: {},
     drawStrokes: {},
     ephemeralMeasure: null,
+    ephemeralDrawText: null,
   };
   notify();
 }

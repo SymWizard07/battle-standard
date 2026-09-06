@@ -83,8 +83,8 @@ export const INFO_SECTIONS: InfoSection[] = [
     icon: FogInfoIcon,
     body: [
       'Only the GM can edit fog. Players see fog the GM has placed; they cannot paint it away.',
-      'Hide adds fog; Reveal removes it. Stroke, rectangle, cone, and sphere shapes match the measure tools.',
-      'Full fog covers the map until you reveal areas. Clear fog removes all fog data on the scene.',
+      'Hide paints fog; Reveal erases it. Stroke, rectangle, cone, and sphere shapes match the measure tools.',
+      'Full fog covers the map until you paint reveals. Clear removes all fog from the scene.',
       'Preview shows opaque player fog so you can check what players will see.',
     ],
   },
@@ -104,9 +104,9 @@ export const INFO_SECTIONS: InfoSection[] = [
     title: 'Draw',
     icon: DrawInfoIcon,
     body: [
-      'Draw freehand strokes, lines, shapes, and cones on the map. Pick a color with the swatch.',
-      'Drag the outline slider left for thinner strokes or right for thicker; the default width is at the center. You can also use + / − keys while drawing.',
-      'Erase removes drawn strokes under the brush. In Select, enable Select drawn shapes to move or delete them.',
+      'Draw freehand strokes, lines, shapes, cones, and text on the map. Pick a color with the swatch.',
+      'Drag the outline slider left for thinner strokes or smaller text, or right for thicker / larger; the default is at the center. You can also use + / − keys, or Shift + mouse wheel, while drawing.',
+      'Text: click to place a box, type, Tab to cycle fonts, Ctrl/Cmd+B/I/U for bold/italic/underline, Enter or click outside to finish. Erase removes drawn strokes under the brush. In Select, enable Select drawn shapes to move or delete them.',
     ],
   },
   {

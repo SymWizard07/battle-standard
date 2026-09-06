@@ -4,6 +4,7 @@ import { useLayoutStore } from '../layoutStore';
 import type { LayoutNode, SplitLayoutNode } from '../schema/layoutSchema';
 import {
   getPanelCollapse,
+  layoutAfterCollapsingOnePanel,
   layoutAfterExpandingOnePanel,
   persistableSplitSizesFromLayout,
 } from '../layoutPanelChrome';
@@ -76,14 +77,15 @@ export function SplitPane({
     [node.children, node.sizes, onSplitResize, path],
   );
 
-  const { onLayoutChange, onLayoutChanged, syncPrevLayout } = useSnappingSplitHandlers({
-    enabled: Boolean(onSplitResize),
-    orientation,
-    childIds,
-    groupRef,
-    groupElementRef,
-    onCommit: commitLayout,
-  });
+  const { onLayoutChange, onLayoutChanged, syncPrevLayout, runProgrammaticLayout } =
+    useSnappingSplitHandlers({
+      enabled: Boolean(onSplitResize),
+      orientation,
+      childIds,
+      groupRef,
+      groupElementRef,
+      onCommit: commitLayout,
+    });
 
   useLayoutEffect(() => {
     syncPrevLayout(defaultLayout);
@@ -115,19 +117,41 @@ export function SplitPane({
     (panelId: string) => {
       const group = groupRef.current;
       if (!group) return;
-      try {
-        const next = layoutAfterExpandingOnePanel(
-          node.children,
-          group.getLayout(),
-          panelId,
-          node.sizes,
-        );
-        group.setLayout(next);
-      } catch {
-        /* group unmounting */
-      }
+      runProgrammaticLayout(() => {
+        try {
+          const next = layoutAfterExpandingOnePanel(
+            node.children,
+            group.getLayout(),
+            panelId,
+            node.sizes,
+          );
+          group.setLayout(next);
+        } catch {
+          /* group unmounting */
+        }
+      });
     },
-    [groupRef, node.children, node.sizes],
+    [groupRef, node.children, node.sizes, runProgrammaticLayout],
+  );
+
+  const collapsePanelLayout = useCallback(
+    (panelId: string) => {
+      const group = groupRef.current;
+      if (!group) return;
+      runProgrammaticLayout(() => {
+        try {
+          const next = layoutAfterCollapsingOnePanel(
+            node.children,
+            group.getLayout(),
+            panelId,
+          );
+          group.setLayout(next);
+        } catch {
+          /* group unmounting */
+        }
+      });
+    },
+    [groupRef, node.children, runProgrammaticLayout],
   );
 
   const groupId = path.length === 0 ? node.id : `${path.join('.')}:${node.id}`;
@@ -208,6 +232,7 @@ export function SplitPane({
             storedSizePercent={node.sizes[i] ?? 100 / node.children.length}
             separatorDisabled={separatorDisabled}
             onCollapsedChange={reportPanelCollapsed}
+            onCollapsePanelLayout={() => collapsePanelLayout(child.id)}
             onRestoreExpandedLayout={() => restorePanelLayout(child.id)}
           />
         );
@@ -234,6 +259,7 @@ type ChildProps = {
   storedSizePercent: number;
   separatorDisabled?: boolean;
   onCollapsedChange?: (panelId: string, collapsed: boolean) => void;
+  onCollapsePanelLayout?: () => void;
   onRestoreExpandedLayout?: () => void;
 };
 
@@ -255,6 +281,7 @@ function SplitChild({
   storedSizePercent,
   separatorDisabled = false,
   onCollapsedChange,
+  onCollapsePanelLayout,
   onRestoreExpandedLayout,
 }: ChildProps) {
   const panelRef = usePanelRef();
@@ -269,8 +296,6 @@ function SplitChild({
     onCollapsedChange?.(child.id, collapsed);
   }, [child.id, collapsed, hasCollapseControl, onCollapsedChange]);
 
-  const resizeLocked = mode === 'live' && hasCollapseControl && collapsed;
-
   return (
     <>
       <Panel
@@ -280,7 +305,6 @@ function SplitChild({
         minSize={panelMinSize}
         collapsible={hasCollapseControl}
         collapsedSize={hasCollapseControl ? '0%' : undefined}
-        disabled={resizeLocked}
         className={highlighted ? 'ring-2 ring-inset ring-sky-500' : undefined}
         style={hasCollapseControl ? { overflow: 'visible' } : undefined}
       >
@@ -303,7 +327,12 @@ function SplitChild({
               : undefined
           }
         >
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div
+            className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden${
+              collapsed ? ' pointer-events-none invisible' : ''
+            }`}
+            aria-hidden={collapsed || undefined}
+          >
             <ModulePanelProvider edges={sharedEdgesInSplit(splitDirection, index, count)}>
               <LayoutNodeRenderer
                 node={child}
@@ -326,6 +355,7 @@ function SplitChild({
                 panelElementRef={panelElementRef}
                 collapse={collapseDirection}
                 storedSizePercent={storedSizePercent}
+                onCollapsePanelLayout={onCollapsePanelLayout}
                 onRestoreExpandedLayout={onRestoreExpandedLayout}
               />
             </div>
@@ -336,8 +366,11 @@ function SplitChild({
         <Separator
           disabled={separatorDisabled}
           className={`bg-slate-700 data-[separator-active]:bg-sky-500${
-            separatorDisabled ? ' pointer-events-none opacity-40' : ''
+            separatorDisabled
+              ? ' pointer-events-none w-0 min-w-0 max-w-0 overflow-hidden opacity-0'
+              : ''
           }`}
+          style={separatorDisabled ? { flexBasis: 0, width: 0, minWidth: 0 } : undefined}
         />
       )}
     </>

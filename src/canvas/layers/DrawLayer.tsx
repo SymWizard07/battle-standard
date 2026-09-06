@@ -1,4 +1,4 @@
-import { Circle, Group, Line, Rect } from 'react-konva';
+import { Circle, Group, Line, Rect, Text } from 'react-konva';
 import { memo, useMemo } from 'react';
 import { ConeShape } from '../ConeShape';
 import {
@@ -10,6 +10,7 @@ import {
   sphereCenterWorld,
   sphereRadiusWorld,
 } from '../../lib/drawShapes';
+import { drawTextTopLeft, drawTextKonvaFontStyle, isDrawTextParams } from '../../lib/drawText';
 import { GRID_SIZE_PX } from '../../lib/fixedGrid';
 import { useRemoteMotionDisplay } from '../../hooks/useRemoteMotion';
 import { useStore } from '../../store/useStore';
@@ -19,8 +20,9 @@ import type {
   DrawPreview,
   DrawShapeKind,
   DrawStroke,
+  DrawStrokeParams,
+  EphemeralDrawText,
   LineMeasureParams,
-  MeasurementParams,
   Point,
   RectMeasureParams,
   SphereMeasureParams,
@@ -30,6 +32,8 @@ interface Props {
   strokes: DrawStroke[];
   preview: DrawPreview | null;
   erasePreview?: { center: Point; radius: number } | null;
+  /** Live text previews (local and/or remote). */
+  liveTexts?: EphemeralDrawText[];
 }
 
 function strokeToLinePoints(points: { x: number; y: number }[]): number[] {
@@ -38,9 +42,42 @@ function strokeToLinePoints(points: { x: number; y: number }[]): number[] {
   return pts;
 }
 
+export function renderDrawTextShape(
+  params: {
+    origin: Point;
+    text: string;
+    fontFamily: string;
+    bold?: boolean;
+    italic?: boolean;
+    underline?: boolean;
+  },
+  color: string,
+  fontSize: number,
+  opacity: number,
+  key: string,
+) {
+  if (!params.text) return null;
+  const topLeft = drawTextTopLeft(params, fontSize);
+  return (
+    <Text
+      key={key}
+      x={topLeft.x}
+      y={topLeft.y}
+      text={params.text}
+      fontSize={fontSize}
+      fontFamily={params.fontFamily}
+      fontStyle={drawTextKonvaFontStyle(params)}
+      textDecoration={params.underline ? 'underline' : undefined}
+      fill={color}
+      opacity={opacity}
+      listening={false}
+    />
+  );
+}
+
 function renderShape(
   kind: DrawShapeKind,
-  params: MeasurementParams | undefined,
+  params: DrawStrokeParams | undefined,
   points: Point[] | undefined,
   color: string | undefined,
   strokeWidth: number,
@@ -161,10 +198,14 @@ function renderShape(
     );
   }
 
+  if (kind === 'text' && isDrawTextParams(params)) {
+    return renderDrawTextShape(params, strokeColor, strokeWidth, opacity, key);
+  }
+
   return null;
 }
 
-export function DrawLayer({ strokes, preview, erasePreview }: Props) {
+export function DrawLayer({ strokes, preview, erasePreview, liveTexts = [] }: Props) {
   return (
     <Group listening={false}>
       {strokes.map((stroke) =>
@@ -188,6 +229,15 @@ export function DrawLayer({ strokes, preview, erasePreview }: Props) {
           0.75,
           'preview',
         )}
+      {liveTexts.map((live, i) =>
+        renderDrawTextShape(
+          live.params,
+          resolveDrawColor(live.color),
+          live.strokeWidth,
+          1,
+          `live-text-${i}`,
+        ),
+      )}
       {erasePreview && (
         <Circle
           x={erasePreview.center.x}
@@ -205,8 +255,12 @@ export function DrawLayer({ strokes, preview, erasePreview }: Props) {
   );
 }
 
-export const ConnectedDrawLayer = memo(function ConnectedDrawLayer(props: Props) {
+export const ConnectedDrawLayer = memo(function ConnectedDrawLayer({
+  hideLocalEphemeralText = false,
+  ...props
+}: Props & { hideLocalEphemeralText?: boolean }) {
   const dragPreview = useStore((s) => s.drawStrokeDragPreview);
+  const localEphemeral = useStore((s) => s.ephemeralDrawText);
   const remoteMotion = useRemoteMotionDisplay();
   const strokes = useMemo(() => {
     let next = mergeDrawStrokeDragPreview(props.strokes, dragPreview);
@@ -216,5 +270,13 @@ export const ConnectedDrawLayer = memo(function ConnectedDrawLayer(props: Props)
     }
     return next;
   }, [props.strokes, dragPreview, remoteMotion.drawStrokes]);
-  return <DrawLayer {...props} strokes={strokes} />;
+
+  const liveTexts = useMemo(() => {
+    const list: EphemeralDrawText[] = [];
+    if (remoteMotion.ephemeralDrawText) list.push(remoteMotion.ephemeralDrawText);
+    if (localEphemeral && !hideLocalEphemeralText) list.push(localEphemeral);
+    return list;
+  }, [remoteMotion.ephemeralDrawText, localEphemeral, hideLocalEphemeralText]);
+
+  return <DrawLayer {...props} strokes={strokes} liveTexts={liveTexts} />;
 });

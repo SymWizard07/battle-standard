@@ -8,6 +8,7 @@ import {
   gridCellToWorldCenter,
   screenToWorld,
   tokenWorldTopLeft,
+  viewportWorldBounds,
   worldToGridCell,
 } from '../lib/grid';
 import {
@@ -26,7 +27,8 @@ import { resolveMapLayerForWorldPoint, tokenAnchorWorld } from '../lib/mapObject
 import { useRemoteMotionDisplay } from '../hooks/useRemoteMotion';
 import { pinEphemeralMeasurement, useActiveScene, useStore, seesAsPlayer } from '../store/useStore';
 import { confirmAction } from '../features/confirm/confirmDialogStore';
-import { isWorldPointHiddenFromPlayer, isTokenPlacementHiddenFromPlayer } from '../lib/playerFogHit';
+import { shouldIgnoreGlobalHotkey } from '../lib/keyboardTarget';
+import { isWorldPointHiddenFromPlayer, isTokenPlacementCompletelyHiddenFromPlayer } from '../lib/playerFogHit';
 
 import { TokenScaleOverlay } from './TokenScaleOverlay';
 import { scrollLibraryNearPointer } from '../hooks/useLibraryDragScroll';
@@ -41,7 +43,8 @@ import {
   canSessionMoveDrawStrokes,
 } from '../sync/syncProvider';
 import { PeerDrawSelectionOverlay } from './PeerDrawSelectionOverlay';
-import { filterTokensForViewer } from '../lib/tokenVisibility';
+import { filterMeasurementsForViewer } from '../lib/measureVisibility';
+import { filterTokensForViewer, isTokenSelectableByPlayer } from '../lib/tokenVisibility';
 import { DEFAULT_GRID_OFFSET, getGridOffset, GRID_SIZE_PX, setGridOffset } from '../lib/fixedGrid';
 import {
   allowDrawToolKeyboardShortcut,
@@ -54,6 +57,16 @@ import { newId } from '../lib/ids';
 import { BackgroundLayer } from './layers/BackgroundLayer';
 import { MapEditOverlay } from './MapEditOverlay';
 import { ConnectedDrawLayer } from './layers/DrawLayer';
+import {
+  DrawTextCursorPlaceholder,
+  DrawTextEditOverlay,
+  DrawTextInputHost,
+  beginEphemeralDrawText,
+  commitOrDiscardEphemeralDrawText,
+  handleDrawTextStyleShortcut,
+  useDrawTextCaretBlink,
+} from './DrawTextEditOverlay';
+import { drawTextFontSize, pointInDrawTextBounds } from '../lib/drawText';
 import { FogLayer } from './layers/FogLayer';
 import { GridLayer } from './layers/GridLayer';
 import { MeasurementLabelsLayer, MeasurementLayer } from './layers/MeasurementLayer';
@@ -105,6 +118,22 @@ export function MapViewport() {
     () => (scene ? filterTokensForViewer(scene.tokens, asPlayer) : []),
     [scene, asPlayer],
   );
+  const playerName = useStore((s) => s.playerName);
+  const viewerMeasurements = useMemo(
+    () =>
+      scene
+        ? filterMeasurementsForViewer(scene.measurements, role, playerName, asPlayer)
+        : [],
+    [scene, role, playerName, asPlayer],
+  );
+  const remoteMotion = useRemoteMotionDisplay();
+  const viewerRemoteEphemeral = useMemo(() => {
+    const remote = remoteMotion.ephemeralMeasure;
+    if (!remote) return null;
+    if (!asPlayer) return remote;
+    if (!remote.visibleToPlayers) return null;
+    return remote;
+  }, [remoteMotion.ephemeralMeasure, asPlayer]);
   const activeSceneId = useStore((s) => s.activeSceneId);
   const assetUrls = useStore((s) => s.assetUrls);
   const maps = scene ? sceneMaps(scene) : [];
@@ -131,7 +160,6 @@ export function MapViewport() {
   const setTokenDragOffMap = useStore((s) => s.setTokenDragOffMap);
   const setTokenLibraryDragOver = useStore((s) => s.setTokenLibraryDragOver);
   const ephemeralMeasure = useStore((s) => s.ephemeralMeasure);
-  const remoteMotion = useRemoteMotionDisplay();
   const alternatingDiagonals = useStore((s) => s.alternatingDiagonals);
   const fogMode = useStore((s) => s.fogMode);
   const fogBrushCells = useStore((s) => s.fogBrushCells);
@@ -140,7 +168,6 @@ export function MapViewport() {
   const measureDisplayStyle = useStore((s) => s.measureDisplayStyle);
   const measureDebugDualView = useStore((s) => s.measureDebugDualView);
   const drawHue = useStore((s) => s.drawHue ?? 0);
-  const playerName = useStore((s) => s.playerName);
   const measureColor = useMemo(
     () => defaultPlayerColor(playerName, drawHue),
     [playerName, drawHue],
@@ -177,14 +204,30 @@ export function MapViewport() {
     measureDisplayStyle,
     measureColor,
   ]);
-  const fogPreview = useStore((s) => s.fogPreview);
+  const initiativeHoveredTokenId = useStore((s) => s.initiativeHoveredTokenId);
+  const tokenHighlightColors = useMemo((): ReadonlyMap<string, string> | undefined => {
+    if (!initiativeHoveredTokenId && !measureTokenHighlightColors) return undefined;
+    const map = new Map<string, string>(measureTokenHighlightColors);
+    if (initiativeHoveredTokenId) {
+      map.set(initiativeHoveredTokenId, '#38bdf8');
+    }
+    return map.size > 0 ? map : undefined;
+  }, [initiativeHoveredTokenId, measureTokenHighlightColors]);
   const setFogPreview = useStore((s) => s.setFogPreview);
   const drawColor = colorFromHue(drawHue);
   const drawStrokeWidth = useStore((s) => s.drawStrokeWidth);
   const drawShape = useStore((s) => s.drawShape);
+  const drawTextFont = useStore((s) => s.drawTextFont);
+  const drawTextBold = useStore((s) => s.drawTextBold);
+  const drawTextItalic = useStore((s) => s.drawTextItalic);
+  const drawTextUnderline = useStore((s) => s.drawTextUnderline);
   const drawPreview = useStore((s) => s.drawPreview);
   const setDrawPreview = useStore((s) => s.setDrawPreview);
+  const ephemeralDrawText = useStore((s) => s.ephemeralDrawText);
+  const setEphemeralDrawText = useStore((s) => s.setEphemeralDrawText);
   const addDrawStroke = useStore((s) => s.addDrawStroke);
+  const textCaretVisible = useDrawTextCaretBlink(!!ephemeralDrawText);
+  const [drawTextSelection, setDrawTextSelection] = useState({ start: 0, end: 0 });
   const removeDrawStrokes = useStore((s) => s.removeDrawStrokes);
   const updateScene = useStore((s) => s.updateScene);
   const selectToken = useStore((s) => s.selectToken);
@@ -217,6 +260,9 @@ export function MapViewport() {
   const gridAnchor = useRef<Point | null>(null);
   const gridAnchorScreen = useRef<Point | null>(null);
   const lastPointerScreen = useRef<Point | null>(null);
+  const [measurePointerScreen, setMeasurePointerScreen] = useState<Point | null>(null);
+  const measurePointerPending = useRef<Point | null>(null);
+  const measurePointerRaf = useRef(0);
   const gridAnchorMapLocal = useRef<Point | null>(null);
   const fogStart = useRef<Point | null>(null);
   const fogPath = useRef<Point[]>([]);
@@ -259,6 +305,16 @@ export function MapViewport() {
   const moveStartPlacements = useRef<Record<string, TokenGridPlacement>>({});
   const tokenDragPending = useRef<{ screen: Point; world: Point } | null>(null);
   const [marquee, setMarquee] = useState<{ from: Point; to: Point } | null>(null);
+  const initiativeTokenPickActive = useStore((s) => s.initiativeTokenPickActive);
+  const importsTokenPickActive = useStore((s) => s.importsTokenPickActive);
+  const tokenPickActive = initiativeTokenPickActive || importsTokenPickActive;
+
+  useEffect(() => {
+    if (tokenPickActive) return;
+    if (!marqueeStart.current) return;
+    marqueeStart.current = null;
+    setMarquee(null);
+  }, [tokenPickActive]);
   const [erasePreview, setErasePreview] = useState<{ center: Point; radius: number } | null>(null);
   const [viewportReady, setViewportReady] = useState(false);
   const homedSceneRef = useRef<string | null>(null);
@@ -378,6 +434,27 @@ export function MapViewport() {
     return pos ? { x: pos.x, y: pos.y } : null;
   }, []);
 
+  const publishMeasurePointer = useCallback((ptr: Point | null) => {
+    lastPointerScreen.current = ptr;
+    measurePointerPending.current = ptr;
+    if (measurePointerRaf.current) return;
+    measurePointerRaf.current = requestAnimationFrame(() => {
+      measurePointerRaf.current = 0;
+      const next = measurePointerPending.current;
+      setMeasurePointerScreen((prev) => {
+        if (prev == null && next == null) return prev;
+        if (prev && next && prev.x === next.x && prev.y === next.y) return prev;
+        return next ? { x: next.x, y: next.y } : null;
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (measurePointerRaf.current) cancelAnimationFrame(measurePointerRaf.current);
+    };
+  }, []);
+
   const syncPointerFromClientEvent = useCallback(
     (e: MouseEvent | PointerEvent | TouchEvent): Point | null => {
       const el = containerRef.current;
@@ -394,10 +471,10 @@ export function MapViewport() {
       if (clientX == null || clientY == null) return null;
       const rect = el.getBoundingClientRect();
       const ptr = { x: clientX - rect.left, y: clientY - rect.top };
-      lastPointerScreen.current = ptr;
+      publishMeasurePointer(ptr);
       return ptr;
     },
-    [],
+    [publishMeasurePointer],
   );
 
   const releaseCanvasPointerCapture = useCallback((pointerId: number | null) => {
@@ -532,7 +609,7 @@ export function MapViewport() {
           const token = scene.tokens.find((t) => t.id === id);
           if (
             token &&
-            isTokenPlacementHiddenFromPlayer(
+            isTokenPlacementCompletelyHiddenFromPlayer(
               token,
               candidate,
               scene.fog,
@@ -630,7 +707,7 @@ export function MapViewport() {
         const token = scene.tokens.find((t) => t.id === id);
         if (!token) continue;
         if (
-          isTokenPlacementHiddenFromPlayer(
+          isTokenPlacementCompletelyHiddenFromPlayer(
             token,
             placement,
             scene.fog,
@@ -770,7 +847,7 @@ export function MapViewport() {
   const updateDrawPreview = (start: Point, end: Point, shiftKey = false) => {
     const shape = useStore.getState().drawShape;
     const state = useStore.getState();
-    if (shape === 'stroke' || shape === 'erase') return;
+    if (shape === 'stroke' || shape === 'erase' || shape === 'text') return;
     if (shape === 'rect') {
       setDrawPreview({
         kind: 'rect',
@@ -941,6 +1018,38 @@ export function MapViewport() {
       }
 
       if (tool === 'draw') {
+        if (drawShape === 'text') {
+          const existing = useStore.getState().ephemeralDrawText;
+          if (existing) {
+            const world = getWorld(ptr);
+            if (
+              !pointInDrawTextBounds(world, existing.params, existing.strokeWidth)
+            ) {
+              if (activeSceneId) {
+                commitOrDiscardEphemeralDrawText(activeSceneId, existing);
+              } else {
+                setEphemeralDrawText(null);
+              }
+            }
+            return false;
+          }
+          const snapped = getSnappedWorld(ptr);
+          const {
+            drawTextFont,
+            drawTextBold,
+            drawTextItalic,
+            drawTextUnderline,
+          } = useStore.getState();
+          setEphemeralDrawText(
+            beginEphemeralDrawText(snapped, drawColor, drawStrokeWidth, {
+              fontFamily: drawTextFont,
+              bold: drawTextBold,
+              italic: drawTextItalic,
+              underline: drawTextUnderline,
+            }),
+          );
+          return false;
+        }
         canvasGestureToolRef.current = 'draw';
         if (drawShape === 'erase') {
           drawStart.current = world;
@@ -984,6 +1093,7 @@ export function MapViewport() {
       measureDisplayStyle,
       scene,
       setDrawPreview,
+      setEphemeralDrawText,
       setFogPreview,
       updateDrawPreview,
       updateMeasurePreview,
@@ -1010,6 +1120,32 @@ export function MapViewport() {
     lastPointerScreen.current = ptr;
     const world = getWorld(ptr);
 
+    const pickState = useStore.getState();
+    if (pickState.initiativeTokenPickActive || pickState.importsTokenPickActive) {
+      let tokenHit = findTokenAtWorld(world, viewerTokens, gridOffset);
+      if (tokenHit && asPlayer && scene) {
+        const token = viewerTokens.find((t) => t.id === tokenHit);
+        if (
+          !token ||
+          !isTokenSelectableByPlayer(token, scene.fog, scene, gridOffset) ||
+          isWorldPointHiddenFromPlayer(world, scene.fog, scene)
+        ) {
+          tokenHit = null;
+        }
+      }
+      if (tokenHit) {
+        if (pickState.importsTokenPickActive) {
+          pickState.submitImportsTokenPick(tokenHit);
+        } else {
+          pickState.submitInitiativeTokenPick(tokenHit);
+        }
+      } else {
+        marqueeStart.current = ptr;
+        setMarquee({ from: ptr, to: ptr });
+      }
+      return;
+    }
+
     if (editTool === 'gridEdit') {
       gridAnchor.current = world;
       gridAnchorScreen.current = ptr;
@@ -1031,12 +1167,15 @@ export function MapViewport() {
       const shiftKey =
         'shiftKey' in evt && (evt as MouseEvent).shiftKey;
       let tokenHit = findTokenAtWorld(world, viewerTokens, gridOffset);
-      if (
-        tokenHit &&
-        asPlayer &&
-        isWorldPointHiddenFromPlayer(world, scene.fog, scene)
-      ) {
-        tokenHit = null;
+      if (tokenHit && asPlayer && scene) {
+        const token = viewerTokens.find((t) => t.id === tokenHit);
+        if (
+          !token ||
+          !isTokenSelectableByPlayer(token, scene.fog, scene, gridOffset) ||
+          isWorldPointHiddenFromPlayer(world, scene.fog, scene)
+        ) {
+          tokenHit = null;
+        }
       }
 
       if (tokenHit) {
@@ -1054,7 +1193,7 @@ export function MapViewport() {
         return;
       }
 
-      const measureHit = findMeasurementAtCell(scene.measurements, cell);
+      const measureHit = findMeasurementAtCell(viewerMeasurements, cell);
       if (activeTool === 'select' && selectDrawShapes) {
         const drawHit = hitDrawStrokeAt(world, scene.drawStrokes ?? [], 8, gridOffset);
         if (drawHit) {
@@ -1121,10 +1260,20 @@ export function MapViewport() {
     }
 
     const ptr = getPointer();
+    if (ptr) publishMeasurePointer(ptr);
     if (!ptr || !scene) return;
-    lastPointerScreen.current = ptr;
 
     const world = getWorld(ptr);
+
+    if (
+      (useStore.getState().initiativeTokenPickActive ||
+        useStore.getState().importsTokenPickActive) &&
+      marqueeStart.current
+    ) {
+      lastPointerScreen.current = ptr;
+      setMarquee({ from: marqueeStart.current, to: ptr });
+      return;
+    }
 
     if (editTool === 'gridEdit' && gridAnchor.current) {
       const aLocal = gridAnchorMapLocal.current;
@@ -1290,7 +1439,7 @@ export function MapViewport() {
 
   const updateCanvasGestureAtScreen = (ptr: Point, shiftKey = false) => {
     if (!scene) return;
-    lastPointerScreen.current = ptr;
+    publishMeasurePointer(ptr);
     const world = getWorld(ptr);
     const state = useStore.getState();
     const tool = state.activeTool;
@@ -1518,6 +1667,46 @@ export function MapViewport() {
       }
     }
 
+    if (
+      (stateAtUp.initiativeTokenPickActive || stateAtUp.importsTokenPickActive) &&
+      marqueeStart.current &&
+      scene
+    ) {
+      const start = marqueeStart.current;
+      const end = lastPointerScreen.current ?? start;
+      const dist = Math.hypot(end.x - start.x, end.y - start.y);
+      marqueeStart.current = null;
+      setMarquee(null);
+      if (dist >= MARQUEE_CLICK_THRESHOLD) {
+        const linked = stateAtUp.initiativeTokenPickActive
+          ? new Set(stateAtUp.initiativeLinkedTokenIds)
+          : null;
+        const ids = findTokensInScreenRect(
+          viewerTokens,
+          start,
+          end,
+          stagePos,
+          viewScale,
+        ).filter((id) => {
+          if (linked?.has(id)) return false;
+          if (!asPlayer || !scene) return true;
+          const token = viewerTokens.find((t) => t.id === id);
+          return (
+            token != null &&
+            isTokenSelectableByPlayer(token, scene.fog, scene, gridOffset)
+          );
+        });
+        if (ids.length > 0) {
+          if (stateAtUp.importsTokenPickActive) {
+            stateAtUp.submitImportsTokenPick(ids);
+          } else {
+            stateAtUp.submitInitiativeTokenPick(ids);
+          }
+        }
+      }
+      return;
+    }
+
     if (tool === 'select' && marqueeStart.current && scene) {
       const start = marqueeStart.current;
       const end = lastPointerScreen.current ?? start;
@@ -1546,7 +1735,14 @@ export function MapViewport() {
           end,
           stagePos,
           viewScale,
-        );
+        ).filter((id) => {
+          if (!asPlayer || !scene) return true;
+          const token = viewerTokens.find((t) => t.id === id);
+          return (
+            token != null &&
+            isTokenSelectableByPlayer(token, scene.fog, scene, gridOffset)
+          );
+        });
         if (marqueeShiftKey.current) {
           const current = useStore.getState().selectedTokenIds;
           selectTokens([...new Set([...current, ...ids])]);
@@ -1631,6 +1827,18 @@ export function MapViewport() {
 
   const onWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
+
+    // Shift+wheel adjusts draw outline instead of zooming.
+    if (e.shiftKey && useStore.getState().activeTool === 'draw') {
+      if (e.deltaY === 0 && e.deltaX === 0) return;
+      const primary =
+        Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      const indexDelta = primary < 0 ? 1 : -1;
+      const { drawStrokeWidth, setDrawStrokeWidth } = useStore.getState();
+      setDrawStrokeWidth(stepDrawStrokeWidth(drawStrokeWidth, indexDelta));
+      return;
+    }
+
     const container = containerRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
@@ -1692,7 +1900,7 @@ export function MapViewport() {
       if (overMap && container) {
         const rect = container.getBoundingClientRect();
         const ptr = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-        lastPointerScreen.current = ptr;
+        publishMeasurePointer(ptr);
         applyMovePreviews(getWorld(ptr));
       }
     };
@@ -1725,6 +1933,8 @@ export function MapViewport() {
     commitTokenMove,
     setTokenDragOffMap,
     setTokenLibraryDragOver,
+    publishMeasurePointer,
+    getWorld,
   ]);
 
   useEffect(() => {
@@ -1747,6 +1957,7 @@ export function MapViewport() {
       if (e.button !== 1) return;
       e.preventDefault();
       const ptr = pointerInContainer(e.clientX, e.clientY);
+      publishMeasurePointer(ptr);
       const v = viewRef.current;
       middlePan.current = true;
       panStart.current = { x: ptr.x, y: ptr.y, stageX: v.x, stageY: v.y };
@@ -1759,6 +1970,7 @@ export function MapViewport() {
         return;
       }
       const ptr = pointerInContainer(e.clientX, e.clientY);
+      publishMeasurePointer(ptr);
       const start = panStart.current;
       viewportGestureRef.current = true;
       applyGestureView({
@@ -1781,7 +1993,7 @@ export function MapViewport() {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
-  }, [endViewportGesture]);
+  }, [endViewportGesture, applyGestureView, publishMeasurePointer]);
 
   const nudgeGridPan = useCallback(
     (dxScreen: number, dyScreen: number) => {
@@ -1862,9 +2074,7 @@ export function MapViewport() {
     if (activeTool !== 'select' || !activeSceneId) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+      if (shouldIgnoreGlobalHotkey(e.target)) return;
 
       if (e.key === 'Delete') {
         const { selectedTokenIds, selectedDrawStrokeIds, selectedMeasurementId, selectDrawShapes } =
@@ -1911,9 +2121,7 @@ export function MapViewport() {
     if (activeTool !== 'select' || !activeSceneId) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+      if (shouldIgnoreGlobalHotkey(e.target)) return;
 
       if (!e.shiftKey || (e.key !== 'd' && e.key !== 'D')) return;
 
@@ -1934,9 +2142,8 @@ export function MapViewport() {
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+      if (shouldIgnoreGlobalHotkey(e.target)) return;
+      if (useStore.getState().ephemeralDrawText) return;
 
       if (e.code !== 'Space') return;
 
@@ -1954,9 +2161,7 @@ export function MapViewport() {
     if (!selectedMapLayerId || !activeSceneId) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+      if (shouldIgnoreGlobalHotkey(e.target)) return;
 
       if (e.key === 'Delete') {
         e.preventDefault();
@@ -2005,9 +2210,7 @@ export function MapViewport() {
 
     const onKeyDown = (e: KeyboardEvent) => {
       // Don't steal keys while typing.
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+      if (shouldIgnoreGlobalHotkey(e.target)) return;
 
       // Nudge in screen pixels for consistent feel.
       const baseScreenPx = 1;
@@ -2036,11 +2239,11 @@ export function MapViewport() {
     if (!scene || !activeSceneId) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+      if (shouldIgnoreGlobalHotkey(e.target)) return;
 
       const selectSnap = useStore.getState().selectSnap;
+      const { role, playerView } = useStore.getState();
+      const movingAsPlayer = seesAsPlayer(role, playerView);
       const gridOffset = scene.gridOffset ?? DEFAULT_GRID_OFFSET;
       const baseStep = selectSnap <= 0 ? 1 : GRID_SIZE_PX * selectSnap;
       const step = baseStep * (e.shiftKey ? 5 : 1);
@@ -2067,6 +2270,18 @@ export function MapViewport() {
           selectSnap,
           gridOffset,
         );
+        if (
+          movingAsPlayer &&
+          isTokenPlacementCompletelyHiddenFromPlayer(
+            token,
+            placement,
+            scene.fog,
+            scene,
+            gridOffset,
+          )
+        ) {
+          continue;
+        }
         updateToken(activeSceneId, id, {
           gridPos: placement.gridPos,
           posOffset: placement.posOffset,
@@ -2093,6 +2308,15 @@ export function MapViewport() {
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (!allowDrawToolKeyboardShortcut(e.target)) return;
+      if (useStore.getState().ephemeralDrawText) return;
+
+      const { drawShape, cycleDrawTextFont } = useStore.getState();
+      if (drawShape === 'text' && e.key === 'Tab') {
+        e.preventDefault();
+        cycleDrawTextFont();
+        return;
+      }
+      if (drawShape === 'text' && handleDrawTextStyleShortcut(e)) return;
 
       const shape = drawShapeForKey(e.key, e.code);
       if (shape) {
@@ -2128,9 +2352,7 @@ export function MapViewport() {
     if (activeTool !== 'fog' && activeTool !== 'measure') return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+      if (shouldIgnoreGlobalHotkey(e.target)) return;
 
       if (activeTool === 'fog') {
         if (!canEditFog()) return;
@@ -2172,13 +2394,6 @@ export function MapViewport() {
 
     let previewBeforeShift: boolean | null = null;
 
-    const isTypingTarget = (target: EventTarget | null) => {
-      const el = target as HTMLElement | null;
-      if (!el) return false;
-      const tag = el.tagName?.toLowerCase();
-      return tag === 'input' || tag === 'textarea' || el.isContentEditable;
-    };
-
     const restorePreview = () => {
       if (previewBeforeShift === null) return;
       useStore.getState().setFogOpaquePreview(previewBeforeShift);
@@ -2186,7 +2401,7 @@ export function MapViewport() {
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!isShiftKey(e.key) || e.repeat || isTypingTarget(e.target)) return;
+      if (!isShiftKey(e.key) || e.repeat || shouldIgnoreGlobalHotkey(e.target)) return;
       const { fogOpaquePreview, setFogOpaquePreview } = useStore.getState();
       previewBeforeShift = fogOpaquePreview;
       if (!fogOpaquePreview) setFogOpaquePreview(true);
@@ -2232,13 +2447,14 @@ export function MapViewport() {
       onPointerUpCapture={onContainerPointerUpCapture}
       onPointerCancelCapture={onContainerPointerUpCapture}
       onMouseLeave={() => {
+        publishMeasurePointer(null);
         if (activeTool === 'draw' && drawShape === 'erase' && !drawStart.current) {
           setErasePreview(null);
         }
       }}
     >
       <SnapControl />
-      {marquee && activeTool === 'select' && (
+      {marquee && (
         <div
           className="pointer-events-none absolute z-30 border border-sky-400 bg-sky-400/15"
           style={{
@@ -2364,11 +2580,19 @@ export function MapViewport() {
             tokens={viewerTokens}
             assetUrls={assetUrls}
             selectedTokenIds={selectedTokenIds}
-            measureHighlightColors={measureTokenHighlightColors}
+            measureHighlightColors={tokenHighlightColors}
             gmShowsHiddenTokens={isGm}
             onTokenTap={noopTokenTap}
             onTokenHover={(id) => {
               if (id && asPlayer && scene) {
+                const token = viewerTokens.find((t) => t.id === id);
+                if (
+                  !token ||
+                  !isTokenSelectableByPlayer(token, scene.fog, scene, gridOffset)
+                ) {
+                  setHoveredTokenId(null);
+                  return;
+                }
                 const ptr = getPointer();
                 if (ptr) {
                   const world = getWorld(ptr);
@@ -2383,13 +2607,18 @@ export function MapViewport() {
           />
         </Layer>
         <Layer listening={!asPlayer}>
-          <FogLayer fog={scene.fog} fogPreview={fogPreview} gridOffset={gridOffset} />
+            <FogLayer
+              fog={scene.fog}
+              gridOffset={gridOffset}
+              scene={scene}
+              viewWorldBounds={viewportWorldBounds(stagePos, viewScale, size)}
+            />
         </Layer>
         <Layer listening={false}>
           <MeasurementLayer
-            measurements={scene.measurements}
+            measurements={viewerMeasurements}
             ephemeral={ephemeralMeasure}
-            remoteEphemeral={remoteMotion.ephemeralMeasure}
+            remoteEphemeral={viewerRemoteEphemeral}
             alternatingDiagonals={alternatingDiagonals}
             debugDualView={measureDebugDualView}
             viewScale={viewScale}
@@ -2402,15 +2631,40 @@ export function MapViewport() {
             strokes={scene.drawStrokes ?? []}
             preview={drawPreview}
             erasePreview={erasePreview}
+            hideLocalEphemeralText={!!ephemeralDrawText}
           />
+          {ephemeralDrawText && (
+            <DrawTextEditOverlay
+              ephemeral={ephemeralDrawText}
+              caretVisible={textCaretVisible}
+              selection={drawTextSelection}
+            />
+          )}
+          {activeTool === 'draw' &&
+            drawShape === 'text' &&
+            !ephemeralDrawText &&
+            measurePointerScreen && (
+              <DrawTextCursorPlaceholder
+                world={screenToWorld(measurePointerScreen, stagePos, viewScale)}
+                color={drawColor}
+                fontSize={drawTextFontSize(drawStrokeWidth)}
+                fontFamily={drawTextFont}
+                bold={drawTextBold}
+                italic={drawTextItalic}
+                underline={drawTextUnderline}
+                visible
+              />
+            )}
         </Layer>
         <Layer>
           <MeasurementLabelsLayer
-            measurements={scene.measurements}
+            measurements={viewerMeasurements}
             ephemeral={ephemeralMeasure}
-            remoteEphemeral={remoteMotion.ephemeralMeasure}
+            remoteEphemeral={viewerRemoteEphemeral}
             alternatingDiagonals={alternatingDiagonals}
             viewScale={viewScale}
+            stagePos={stagePos}
+            pointerScreen={measurePointerScreen}
             fadingMeasurements={fadingMeasurements}
             onDismissMeasurement={(id) => {
               if (activeSceneId) fadeAndRemoveMeasurement(activeSceneId, id);
@@ -2418,6 +2672,13 @@ export function MapViewport() {
           />
         </Layer>
       </Stage>
+      {ephemeralDrawText && activeSceneId && (
+        <DrawTextInputHost
+          ephemeral={ephemeralDrawText}
+          activeSceneId={activeSceneId}
+          onSelectionChange={setDrawTextSelection}
+        />
+      )}
       {interactionMode === 'scaling' && activeSceneId && (
         <TokenScaleOverlay
           tokens={scene.tokens}

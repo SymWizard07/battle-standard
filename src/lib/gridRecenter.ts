@@ -1,6 +1,8 @@
 import { DEFAULT_GRID_OFFSET, GRID_SIZE_PX } from './fixedGrid';
 import { normalizeScene, mapLayerWorldCenter, sceneMaps } from './sceneMaps';
 import { shiftDrawStroke } from './drawShapes';
+import { shiftFogOps } from './fogMask';
+import { invalidateFogMaskCache } from './fogMaskCache';
 import type { MeasurementObject, Point, Scene } from './types';
 
 export function nearestGridCornerForOffset(
@@ -52,16 +54,6 @@ function shiftPoint(p: Point, delta: Point): Point {
   return { x: p.x + delta.x, y: p.y + delta.y };
 }
 
-function shiftFogPolygons(
-  polygons: { id: string; rings: Point[][]; mapLayerId?: string }[],
-  delta: Point,
-) {
-  return polygons.map((poly) => ({
-    ...poly,
-    rings: poly.rings.map((ring) => ring.map((p) => shiftPoint(p, delta))),
-  }));
-}
-
 function shiftMeasurement(m: MeasurementObject, delta: Point): MeasurementObject {
   if (m.kind === 'line') {
     const p = m.params as { from: Point; to: Point };
@@ -108,6 +100,7 @@ export function shiftSceneForGridRecenter(
   delta: Point,
   newGridOffset: Point,
 ): Scene {
+  invalidateFogMaskCache();
   return {
     ...scene,
     gridOffset: newGridOffset,
@@ -121,8 +114,7 @@ export function shiftSceneForGridRecenter(
     })),
     fog: {
       ...scene.fog,
-      unexploredMask: shiftFogPolygons(scene.fog.unexploredMask, delta),
-      revealedMask: shiftFogPolygons(scene.fog.revealedMask, delta),
+      ops: shiftFogOps(scene.fog.ops ?? [], delta),
     },
     measurements: scene.measurements.map((m) => shiftMeasurement(m, delta)),
     drawStrokes: (scene.drawStrokes ?? []).map((s) => shiftDrawStroke(s, delta)),

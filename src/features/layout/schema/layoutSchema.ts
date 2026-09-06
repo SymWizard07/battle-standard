@@ -1,6 +1,8 @@
 export const MODULE_IDS = [
   'scenes',
+  'initiative',
   'tokens',
+  'imports',
   'settings',
   'toolbar',
   'toolOptions',
@@ -71,7 +73,9 @@ export type LayoutProfiles = Record<DeviceClass, LayoutNode>;
 
 export const MODULE_LABELS: Record<ModuleId, string> = {
   scenes: 'Scenes',
+  initiative: 'Initiative',
   tokens: 'Tokens',
+  imports: 'Appearance',
   settings: 'Settings',
   toolbar: 'Toolbar',
   toolOptions: 'Tool options',
@@ -232,6 +236,63 @@ export function cloneLayout(node: LayoutNode): LayoutNode {
     return { ...node, tabs: node.tabs.map((t) => ({ ...t })) };
   }
   return { ...node };
+}
+
+/**
+ * Drop modules/tabs whose ids are no longer in MODULE_IDS (removed “dead” modules).
+ * Returns null when the node itself should be removed from its parent.
+ */
+export function stripUnknownModules(node: LayoutNode): LayoutNode | null {
+  if (node.type === 'empty' || node.type === 'playArea') return node;
+
+  if (node.type === 'module') {
+    return isModuleId(node.moduleId) ? node : null;
+  }
+
+  if (node.type === 'tabs') {
+    const tabs = node.tabs
+      .filter((tab) => isModuleId(tab.moduleId))
+      .map((tab) => ({
+        ...tab,
+        title: MODULE_LABELS[tab.moduleId],
+      }));
+    if (tabs.length === 0) return null;
+    const activeTabId = tabs.some((t) => t.id === node.activeTabId)
+      ? node.activeTabId
+      : tabs[0]!.id;
+    return collapseTabsIfAlone({ ...node, tabs, activeTabId });
+  }
+
+  const children: LayoutNode[] = [];
+  for (const child of node.children) {
+    const next = stripUnknownModules(child);
+    if (next) children.push(next);
+  }
+  if (children.length === 0) return null;
+  if (children.length === 1) return children[0]!;
+  return {
+    ...node,
+    children,
+    sizes: normalizeSplitSizes(node.sizes, children.length),
+  };
+}
+
+/**
+ * Normalize a saved or draft tree: strip dead modules, inject settings if needed,
+ * repair structure, validate. Falls back to `fallback` when the result is unusable.
+ */
+export function sanitizeLayoutProfile(node: LayoutNode, fallback: LayoutNode): LayoutNode {
+  const stripped = stripUnknownModules(cloneLayout(node));
+  if (!stripped || stripped.type === 'empty') {
+    return cloneLayout(fallback);
+  }
+  const repaired = repairLayoutTree(ensureSettingsModule(stripped));
+  const err = validateLayout(repaired);
+  if (err) {
+    console.warn(`Layout sanitization failed (${err}); using default`);
+    return cloneLayout(fallback);
+  }
+  return repaired;
 }
 
 function normalizeSplitSizes(sizes: number[], count: number): number[] {

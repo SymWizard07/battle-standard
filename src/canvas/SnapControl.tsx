@@ -1,5 +1,6 @@
-import type { MouseEvent, PointerEvent, TouchEvent } from 'react';
+import { useEffect, useState, type MouseEvent, type PointerEvent, type TouchEvent } from 'react';
 import { GRID_SNAP_CYCLE, showsGridSnapControl } from '../lib/gridSnap';
+import { shouldIgnoreGlobalHotkey } from '../lib/keyboardTarget';
 import { seesAsPlayer, useStore } from '../store/useStore';
 
 function stopBubble(e: MouseEvent | PointerEvent | TouchEvent) {
@@ -12,6 +13,31 @@ const SNAP_LABELS: Record<(typeof GRID_SNAP_CYCLE)[number], string> = {
   1: 'Full',
 };
 
+/** True when focus would swallow Space before the snap cycle hotkey. */
+function useSpaceHotkeyBlocked(): boolean {
+  const [blocked, setBlocked] = useState(() =>
+    shouldIgnoreGlobalHotkey(document.activeElement),
+  );
+
+  useEffect(() => {
+    const sync = () => {
+      // Wait for focus to settle after focusout.
+      requestAnimationFrame(() => {
+        setBlocked(shouldIgnoreGlobalHotkey(document.activeElement));
+      });
+    };
+    sync();
+    document.addEventListener('focusin', sync);
+    document.addEventListener('focusout', sync);
+    return () => {
+      document.removeEventListener('focusin', sync);
+      document.removeEventListener('focusout', sync);
+    };
+  }, []);
+
+  return blocked;
+}
+
 export function SnapControl() {
   const activeTool = useStore((s) => s.activeTool);
   const interactionMode = useStore((s) => s.interactionMode);
@@ -19,9 +45,13 @@ export function SnapControl() {
   const playerView = useStore((s) => s.playerView);
   const selectSnap = useStore((s) => s.selectSnap);
   const setSelectSnap = useStore((s) => s.setSelectSnap);
+  const ephemeralDrawText = useStore((s) => s.ephemeralDrawText);
   const asPlayer = seesAsPlayer(role, playerView);
   const scaling = interactionMode === 'scaling';
+  const spaceHotkeyBlocked = useSpaceHotkeyBlocked();
 
+  // Hide when Space cannot cycle snap (wrong tool, typing/Imports focus, draw text).
+  if (ephemeralDrawText || spaceHotkeyBlocked) return null;
   if (!showsGridSnapControl(activeTool, asPlayer) && !scaling) return null;
 
   return (

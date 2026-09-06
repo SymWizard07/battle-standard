@@ -7,8 +7,10 @@ import { sceneMaps } from '../lib/sceneMaps';
 import { useActiveScene, useStore } from '../store/useStore';
 import { BackgroundLayer } from './layers/BackgroundLayer';
 import { DrawLayer } from './layers/DrawLayer';
+import { fogOpsFingerprint } from '../lib/fogMask';
 import { FogLayer } from './layers/FogLayer';
 import { MeasurementLayer } from './layers/MeasurementLayer';
+import { filterMeasurementsForViewer } from '../lib/measureVisibility';
 import { defaultPlayerColor } from '../lib/playerColor';
 import { TokenLayer } from './layers/TokenLayer';
 
@@ -25,6 +27,13 @@ export function ScenePreviewCapture() {
   const stageRef = useRef<Konva.Stage>(null);
 
   const mapBounds = useMemo(() => (scene ? computeMapBounds(scene) : null), [scene]);
+  const previewMeasurements = useMemo(
+    () =>
+      scene
+        ? filterMeasurementsForViewer(scene.measurements, 'player', '', true)
+        : [],
+    [scene],
+  );
 
   const fit = useMemo(
     () =>
@@ -46,9 +55,7 @@ export function ScenePreviewCapture() {
   }, [activeSceneId, setScenePreviewUrl]);
 
   const gridOffset = scene?.gridOffset ?? DEFAULT_GRID_OFFSET;
-  const fogKey = scene
-    ? `${scene.fog.defaultHidden}:${scene.fog.unexploredMask.length}:${scene.fog.revealedMask.length}`
-    : '';
+  const fogKey = scene ? fogOpsFingerprint(scene.fog) : '';
 
   useEffect(() => {
     if (!scene) return;
@@ -93,13 +100,14 @@ export function ScenePreviewCapture() {
             />
             <FogLayer
               fog={scene.fog}
-              fogPreview={null}
               gridOffset={gridOffset}
+              scene={scene}
               renderAsPlayer
               fixedFogPattern
+              showToolPreview={false}
             />
             <MeasurementLayer
-              measurements={scene.measurements}
+              measurements={previewMeasurements}
               ephemeral={null}
               alternatingDiagonals={false}
               viewScale={1}

@@ -24,9 +24,9 @@ export type MeasureKind = 'line' | 'cone' | 'cube' | 'sphere';
 export type MeasureDisplayStyle = 'vtt' | '5e';
 /** @deprecated use MeasureDisplayStyle */
 export type ConeStyle = MeasureDisplayStyle;
-export type DrawShapeKind = 'stroke' | 'rect' | MeasureKind;
+export type DrawShapeKind = 'stroke' | 'rect' | 'text' | MeasureKind;
 /** Draw tool mode — includes erase, which is not persisted on the scene. */
-export type DrawToolShape = 'stroke' | 'rect' | Exclude<MeasureKind, 'cube'> | 'erase';
+export type DrawToolShape = 'stroke' | 'rect' | 'text' | Exclude<MeasureKind, 'cube'> | 'erase';
 export type InteractionMode = 'idle' | 'selected' | 'moving' | 'scaling';
 export type SessionRole = 'gm' | 'player';
 export type SyncStatus = 'offline' | 'connecting' | 'connected' | 'error';
@@ -51,6 +51,42 @@ export type StatusEffectId =
 
 export type TokenVitalityState = 'bloodied' | 'dead';
 
+/** 5e movement modes for token speed entries. */
+export type TokenSpeedType = 'walk' | 'fly' | 'swim' | 'climb' | 'burrow';
+
+export interface TokenSpeed {
+  type: TokenSpeedType;
+  /** Feet as a digit string; empty = unset. */
+  value: string;
+}
+
+/** 5e skill names for token sheet skill slots. */
+export type TokenSkillType =
+  | 'acrobatics'
+  | 'animalHandling'
+  | 'arcana'
+  | 'athletics'
+  | 'deception'
+  | 'history'
+  | 'insight'
+  | 'intimidation'
+  | 'investigation'
+  | 'medicine'
+  | 'nature'
+  | 'perception'
+  | 'performance'
+  | 'persuasion'
+  | 'religion'
+  | 'sleightOfHand'
+  | 'stealth'
+  | 'survival';
+
+export interface TokenSkill {
+  type: TokenSkillType;
+  /** Bonus expression (e.g. +5, +1d4); empty = unset. */
+  value: string;
+}
+
 export interface Point {
   x: number;
   y: number;
@@ -74,6 +110,34 @@ export interface TokenGridPlacement {
   posOffset?: Point;
 }
 
+/** Image placement inside footprint, in cell units relative to footprint top-left. */
+export interface TokenImageTransform {
+  /** Offset of image top-left within the footprint (cells). */
+  offset: Point;
+  /** Display size of the image in cells. */
+  size: { w: number; h: number };
+}
+
+/** Explicit selection outline in cell units within the footprint. */
+export interface TokenOutlineStyle {
+  shape: 'circle' | 'rect';
+  /** Outline AABB top-left within the footprint (cells). */
+  offset: Point;
+  /** Outline AABB size in cells (circle is inscribed). */
+  size: { w: number; h: number };
+}
+
+/** Unsaved draft in the Imports appearance inspector (session UI state). */
+export interface ImportsInspectTarget {
+  assetId: AssetId;
+  name: string;
+  scope: 'campaign' | 'global' | 'map';
+  entryId?: string;
+  footprint: { w: number; h: number };
+  imageTransform: TokenImageTransform;
+  outline: TokenOutlineStyle;
+}
+
 export interface MapTransform {
   x: number;
   y: number;
@@ -87,10 +151,56 @@ export interface Token {
   imageAssetId?: AssetId;
   gridPos: GridCell;
   footprint: { w: number; h: number };
+  /**
+   * Image placement inside the footprint (cell units from footprint top-left).
+   * When absent, the image stretches to fill the footprint.
+   */
+  imageTransform?: TokenImageTransform;
+  /**
+   * Explicit selection outline. When absent, outline is derived from opaque pixels.
+   */
+  outline?: TokenOutlineStyle;
   rotation: number;
   statusEffects: StatusEffectId[];
   /** Mutually exclusive with dead — at most one vitality state at a time. */
   vitalityState?: TokenVitalityState;
+  /** Combat / character stats (empty/undefined = unset). */
+  /** Initiative bonus expression (e.g. +2, +1d4). */
+  initiative?: string;
+  ac?: string;
+  hp?: string;
+  speeds?: TokenSpeed[];
+  str?: string;
+  dex?: string;
+  con?: string;
+  int?: string;
+  wis?: string;
+  cha?: string;
+  /** Ability mod/save expressions (e.g. +1, +1d10-1). */
+  strMod?: string;
+  dexMod?: string;
+  conMod?: string;
+  intMod?: string;
+  wisMod?: string;
+  chaMod?: string;
+  strSave?: string;
+  dexSave?: string;
+  conSave?: string;
+  intSave?: string;
+  wisSave?: string;
+  chaSave?: string;
+  skills?: TokenSkill[];
+  /** Which skill types occupy the three sheet skill slots (`null` = None). */
+  skillSlots?: Array<TokenSkillType | null>;
+  alignment?: string;
+  passivePerception?: string;
+  senses?: string;
+  languages?: string;
+  xp?: string;
+  /** Free-text traits, actions, reactions, effects, and similar descriptions. */
+  actions?: string;
+  /** Which collapsible sheet section is expanded (Attributes vs Actions). */
+  sheetSection?: 'attributes' | 'actions';
   owner: 'gm' | 'player';
   color: string;
   /** Map layer this token is placed on (moves with the map). */
@@ -103,18 +213,16 @@ export interface Token {
   lockedForPlayers?: boolean;
 }
 
-export interface FogPolygon {
-  id: string;
-  /** rings[0] = outer ring, rings[1..] = holes */
-  rings: Point[][];
-  /** Map layer this fog shape is placed on (moves with the map). */
-  mapLayerId?: string;
-}
+export type FogPaintMode = 'hide' | 'reveal';
+
+export type FogOp =
+  | { id: string; kind: 'stroke'; mode: FogPaintMode; points: Point[]; radius: number }
+  | { id: string; kind: 'rect'; mode: FogPaintMode; x: number; y: number; w: number; h: number }
+  | { id: string; kind: 'polygon'; mode: FogPaintMode; rings: Point[][] };
 
 export interface FogState {
-  unexploredMask: FogPolygon[];
-  revealedMask: FogPolygon[];
   defaultHidden: boolean;
+  ops: FogOp[];
 }
 
 export interface LineMeasureParams {
@@ -173,17 +281,32 @@ export interface MeasurementObject {
   mapLayerId?: string;
   /** Who pinned this measurement (used for per-user dismiss). */
   pinnedBy?: { role: 'gm' | 'player'; name: string };
+  /** When false, other players cannot see this measurement; owner and GM still see it. */
+  visibleToPlayers?: boolean;
 }
+
+/** MS Paint–style draw text: origin is the bottom-left of the text box. */
+export interface DrawTextParams {
+  origin: Point;
+  text: string;
+  fontFamily: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+}
+
+export type DrawStrokeParams = MeasurementParams | DrawTextParams;
 
 export interface DrawStroke {
   id: string;
   kind: DrawShapeKind;
   color: string;
+  /** For text strokes, this is the font size in world pixels. */
   strokeWidth: number;
   /** Map layer this stroke is placed on (moves with the map). */
   mapLayerId?: string;
   points?: Point[];
-  params?: MeasurementParams;
+  params?: DrawStrokeParams;
   /** Who created this stroke (used for multiplayer sync). */
   createdBy?: { role: 'gm' | 'player'; name: string };
 }
@@ -193,7 +316,14 @@ export interface DrawPreview {
   color: string;
   strokeWidth: number;
   points?: Point[];
-  params?: MeasurementParams;
+  params?: DrawStrokeParams;
+}
+
+/** In-progress text while typing (live-synced without the local marquee). */
+export interface EphemeralDrawText {
+  color: string;
+  strokeWidth: number;
+  params: DrawTextParams;
 }
 
 export interface SceneMapLayer {
@@ -230,6 +360,42 @@ export interface TokenLibraryGroup {
   order: number;
 }
 
+/** Sheet/stats copied when a map token is saved into a library group. */
+export interface TokenSheetSnapshot {
+  initiative?: string;
+  ac?: string;
+  hp?: string;
+  speeds?: TokenSpeed[];
+  str?: string;
+  dex?: string;
+  con?: string;
+  int?: string;
+  wis?: string;
+  cha?: string;
+  strMod?: string;
+  dexMod?: string;
+  conMod?: string;
+  intMod?: string;
+  wisMod?: string;
+  chaMod?: string;
+  strSave?: string;
+  dexSave?: string;
+  conSave?: string;
+  intSave?: string;
+  wisSave?: string;
+  chaSave?: string;
+  skills?: TokenSkill[];
+  /** Which skill types occupy the three sheet skill slots (`null` = None). */
+  skillSlots?: Array<TokenSkillType | null>;
+  alignment?: string;
+  passivePerception?: string;
+  senses?: string;
+  languages?: string;
+  xp?: string;
+  actions?: string;
+  sheetSection?: 'attributes' | 'actions';
+}
+
 export type TokenLibraryEntry =
   | {
       id: string;
@@ -238,6 +404,12 @@ export type TokenLibraryEntry =
       assetId: string;
       name: string;
       order: number;
+      /** Footprint when placed on the map (defaults to 1×1). */
+      footprint?: { w: number; h: number };
+      imageTransform?: TokenImageTransform;
+      outline?: TokenOutlineStyle;
+      /** Character sheet fields; *-expressions resolve when placed. */
+      sheet?: TokenSheetSnapshot;
     }
   | {
       id: string;
@@ -247,6 +419,7 @@ export type TokenLibraryEntry =
       name: string;
       footprint: { w: number; h: number };
       order: number;
+      sheet?: TokenSheetSnapshot;
     }
   | {
       id: string;
@@ -255,6 +428,7 @@ export type TokenLibraryEntry =
       templateColor: string;
       name: string;
       order: number;
+      sheet?: TokenSheetSnapshot;
     };
 
 export interface TokenLibraryLayout {
@@ -268,6 +442,9 @@ export interface TokenLibraryDropPayload {
   color: string;
   imageAssetId?: string;
   footprint: { w: number; h: number };
+  imageTransform?: TokenImageTransform;
+  outline?: TokenOutlineStyle;
+  sheet?: TokenSheetSnapshot;
 }
 
 export interface Campaign {
@@ -317,7 +494,6 @@ export const DEFAULT_MAP_TRANSFORM: MapTransform = {
 };
 
 export const DEFAULT_FOG: FogState = {
-  unexploredMask: [],
-  revealedMask: [],
   defaultHidden: false,
+  ops: [],
 };

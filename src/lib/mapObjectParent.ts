@@ -11,7 +11,6 @@ import {
 import type {
   CubeMeasureParams,
   DrawStroke,
-  FogPolygon,
   MapTransform,
   MeasurementObject,
   Point,
@@ -45,22 +44,6 @@ export function resolveMapLayerForWorldPoint(
   scene: Scene,
 ): string | undefined {
   return hitMapLayerAt(world, sceneMapsForHitTest(scene))?.id;
-}
-
-function polygonCentroid(rings: Point[][]): Point | null {
-  const ring = rings[0];
-  if (!ring || ring.length === 0) return null;
-  let sx = 0;
-  let sy = 0;
-  for (const p of ring) {
-    sx += p.x;
-    sy += p.y;
-  }
-  return { x: sx / ring.length, y: sy / ring.length };
-}
-
-export function fogPolygonAnchorWorld(polygon: FogPolygon): Point | null {
-  return polygonCentroid(polygon.rings);
 }
 
 export function measurementAnchorWorld(
@@ -106,19 +89,6 @@ function transformTokenForMap(
     ...token,
     gridPos,
     posOffset: posOffsetFromWorldTopLeft(posOffset),
-  };
-}
-
-function transformFogPolygonForMap(
-  polygon: FogPolygon,
-  baseTransform: MapTransform,
-  newTransform: MapTransform,
-): FogPolygon {
-  return {
-    ...polygon,
-    rings: polygon.rings.map((ring) =>
-      ring.map((p) => transformPointWithMap(p, baseTransform, newTransform)),
-    ),
   };
 }
 
@@ -193,19 +163,6 @@ export function applyMapTransformToSceneChildren(
         ? transformTokenForMap(t, oldTransform, newTransform, gridOffset)
         : t,
     ),
-    fog: {
-      ...scene.fog,
-      unexploredMask: scene.fog.unexploredMask.map((p) =>
-        p.mapLayerId === mapLayerId
-          ? transformFogPolygonForMap(p, oldTransform, newTransform)
-          : p,
-      ),
-      revealedMask: scene.fog.revealedMask.map((p) =>
-        p.mapLayerId === mapLayerId
-          ? transformFogPolygonForMap(p, oldTransform, newTransform)
-          : p,
-      ),
-    },
     measurements: scene.measurements.map((m) =>
       m.mapLayerId === mapLayerId
         ? transformMeasurementForMap(m, oldTransform, newTransform, gridOffset)
@@ -223,12 +180,6 @@ export function assignTokenMapLayer(token: Token, scene: Scene): Token {
   const gridOffset = scene.gridOffset ?? DEFAULT_GRID_OFFSET;
   const anchor = tokenAnchorWorld(token, gridOffset);
   return { ...token, mapLayerId: resolveMapLayerForWorldPoint(anchor, scene) };
-}
-
-export function assignFogPolygonMapLayer(polygon: FogPolygon, scene: Scene): FogPolygon {
-  const anchor = fogPolygonAnchorWorld(polygon);
-  if (!anchor) return polygon;
-  return { ...polygon, mapLayerId: resolveMapLayerForWorldPoint(anchor, scene) };
 }
 
 export function assignMeasurementMapLayer(
@@ -257,15 +208,6 @@ export function assignMissingMapParents(scene: Scene): Scene {
   };
   next = {
     ...next,
-    fog: {
-      ...next.fog,
-      unexploredMask: next.fog.unexploredMask.map((p) =>
-        p.mapLayerId ? p : assignFogPolygonMapLayer(p, next),
-      ),
-      revealedMask: next.fog.revealedMask.map((p) =>
-        p.mapLayerId ? p : assignFogPolygonMapLayer(p, next),
-      ),
-    },
     measurements: next.measurements.map((m) =>
       m.mapLayerId ? m : assignMeasurementMapLayer(m, next),
     ),
@@ -281,11 +223,6 @@ export function reassignAllObjectMapParents(scene: Scene): Scene {
   return {
     ...scene,
     tokens: scene.tokens.map((t) => assignTokenMapLayer(t, scene)),
-    fog: {
-      ...scene.fog,
-      unexploredMask: scene.fog.unexploredMask.map((p) => assignFogPolygonMapLayer(p, scene)),
-      revealedMask: scene.fog.revealedMask.map((p) => assignFogPolygonMapLayer(p, scene)),
-    },
     measurements: scene.measurements.map((m) => assignMeasurementMapLayer(m, scene)),
     drawStrokes: (scene.drawStrokes ?? []).map((s) => assignDrawStrokeMapLayer(s, scene)),
   };
@@ -299,13 +236,6 @@ export function reassignChildrenAfterMapRemoved(scene: Scene, removedMapId: stri
     if (token.mapLayerId !== removedMapId) return token;
     const anchor = tokenAnchorWorld(token, gridOffset);
     return { ...token, mapLayerId: hitMapLayerAt(anchor, maps)?.id };
-  };
-
-  const reassignFog = (polygon: FogPolygon): FogPolygon => {
-    if (polygon.mapLayerId !== removedMapId) return polygon;
-    const anchor = fogPolygonAnchorWorld(polygon);
-    if (!anchor) return { ...polygon, mapLayerId: undefined };
-    return { ...polygon, mapLayerId: hitMapLayerAt(anchor, maps)?.id };
   };
 
   const reassignMeasurement = (measurement: MeasurementObject): MeasurementObject => {
@@ -325,11 +255,6 @@ export function reassignChildrenAfterMapRemoved(scene: Scene, removedMapId: stri
   return {
     ...scene,
     tokens: scene.tokens.map(reassignToken),
-    fog: {
-      ...scene.fog,
-      unexploredMask: scene.fog.unexploredMask.map(reassignFog),
-      revealedMask: scene.fog.revealedMask.map(reassignFog),
-    },
     measurements: scene.measurements.map(reassignMeasurement),
     drawStrokes: (scene.drawStrokes ?? []).map(reassignDrawStroke),
   };

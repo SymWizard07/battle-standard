@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { TokenLibraryGroup, TokenLibraryLayout } from '../../lib/types';
-import { TEMPLATE_PRESETS, entriesForGroup, groupSectionTheme, canAcceptLibraryEntryDrop } from '../../lib/tokenLibrary';
+import { TEMPLATE_PRESETS, entriesForGroup, groupSectionTheme, canAcceptLibraryEntryDrop, canAcceptMapTokenDrop } from '../../lib/tokenLibrary';
 import { InlineRenameField } from '../../components/InlineRenameField';
 import { StyledTokenName } from '../../components/StyledTokenName';
 import { plainTokenName } from '../../lib/tokenNameMarkup';
@@ -70,13 +70,17 @@ export function TokenLibraryGroupSection({
   const copyTemplatePresetToLibraryGroup = useStore((s) => s.copyTemplatePresetToLibraryGroup);
   const beginLibraryEntryDrag = useStore((s) => s.beginLibraryEntryDrag);
   const endLibraryEntryDrag = useStore((s) => s.endLibraryEntryDrag);
+  const libraryEntryPickActive = useStore((s) => s.libraryEntryPickActive);
   const [dropHighlight, setDropHighlight] = useState(false);
 
   const entries = entriesForGroup(layout, group.id);
+  const pickLocksTemplates =
+    libraryEntryPickActive && group.kind === 'templates';
+  const collapsed = group.collapsed || pickLocksTemplates;
   const draggingMapToken = interactionMode === 'moving';
   const draggingLibraryEntry = tokenLibraryEntryDragId != null;
   const acceptsLibraryEntry = canAcceptLibraryEntryDrop(group);
-  const acceptsMapTokenDrop = group.kind !== 'templates';
+  const acceptsMapTokenDrop = canAcceptMapTokenDrop(group);
   const draggedEntry = useMemo(() => {
     if (!tokenLibraryEntryDragId) return null;
     return layout.entries.find((e) => e.id === tokenLibraryEntryDragId) ?? null;
@@ -115,7 +119,7 @@ export function TokenLibraryGroupSection({
     draggedEntry.groupId !== group.id;
   const showDropPreview = showMapDropPreview || showEntryDropPreview;
   const showNonTemplateBody =
-    group.kind !== 'templates' && (!group.collapsed || padEmptyGroupForDrag);
+    group.kind !== 'templates' && (!collapsed || padEmptyGroupForDrag);
   const importHasEntries = group.kind === 'import' && entries.length > 0;
   const canRenameGroup = group.kind === 'user';
   const theme = groupSectionTheme(group);
@@ -177,8 +181,15 @@ export function TokenLibraryGroupSection({
 
   return (
     <section
-      className={`border-b ${theme.section} ${mapDropCursor}`}
+      className={`border-b ${theme.section} ${mapDropCursor} ${
+        pickLocksTemplates ? 'pointer-events-none opacity-40' : ''
+      }`}
       data-token-library-group={group.id}
+      title={
+        pickLocksTemplates
+          ? 'Color templates can’t be edited in Appearance'
+          : undefined
+      }
       onPointerEnter={() => {
         if (draggingMapToken) {
           setTokenLibraryDragOver(true);
@@ -224,11 +235,12 @@ export function TokenLibraryGroupSection({
       <div className={`flex items-center gap-1 px-2 py-2 ${theme.header}`}>
         <button
           type="button"
-          className="flex h-9 w-4 shrink-0 items-center justify-center text-slate-400"
+          className="flex h-9 w-4 shrink-0 items-center justify-center text-slate-400 disabled:opacity-50"
           onClick={onToggleCollapse}
-          aria-label={group.collapsed ? 'Expand group' : 'Collapse group'}
+          disabled={pickLocksTemplates}
+          aria-label={collapsed ? 'Expand group' : 'Collapse group'}
         >
-          {group.collapsed ? '▸' : '▾'}
+          {collapsed ? '▸' : '▾'}
         </button>
         <InlineRenameField
           value={group.name}
@@ -268,7 +280,7 @@ export function TokenLibraryGroupSection({
           }`}
         >
           <div className="grid grid-cols-3 gap-2">
-            {!group.collapsed &&
+            {!collapsed &&
               entries.map((entry) => (
                 <TokenLibraryEntryThumb
                   key={entry.id}
@@ -295,7 +307,7 @@ export function TokenLibraryGroupSection({
         </div>
       )}
 
-      {!group.collapsed && group.kind === 'templates' && (
+      {!collapsed && group.kind === 'templates' && (
         <div
           className={`px-2 pb-3 transition-colors ${theme.body} ${
             dropHighlight ? 'ring-1 ring-inset ring-sky-600/50' : ''

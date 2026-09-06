@@ -2,6 +2,7 @@
  * Run: npx tsx src/features/layout/layoutPanelChrome.test.ts
  */
 import {
+  layoutAfterCollapsingOnePanel,
   layoutAfterExpandingOnePanel,
   resolveCollapseAssignmentPath,
 } from './layoutPanelChrome';
@@ -50,9 +51,65 @@ function testExpandKeepsOtherCollapsedPanelAtZero() {
     storedSizes,
   );
 
-  assertClose(next.left!, (18 / 82) * 100, 'left panel scaled');
-  assertClose(next.center!, (64 / 82) * 100, 'center panel scaled');
+  assertClose(next.left!, 18, 'left panel restores absolute stored size');
+  assertClose(next.center!, 82, 'center takes remaining space');
   assertClose(next.right!, 0, 'right panel stays collapsed');
+}
+
+function testExpandSecondAfterFirstRestoresAbsoluteSizes() {
+  const children: LayoutNode[] = [
+    { type: 'module', id: 'left', moduleId: 'scenes', collapse: 'left' },
+    { type: 'playArea', id: 'center' },
+    { type: 'module', id: 'right', moduleId: 'tokens', collapse: 'right' },
+  ];
+  const storedSizes = [18, 64, 18];
+  // After expanding left while right was still collapsed.
+  const afterLeftOpen = { left: 18, center: 82, right: 0 };
+
+  const next = layoutAfterExpandingOnePanel(
+    children,
+    afterLeftOpen,
+    'right',
+    storedSizes,
+  );
+
+  assertClose(next.left!, 18, 'left stays at original size');
+  assertClose(next.center!, 64, 'center returns to original size');
+  assertClose(next.right!, 18, 'right restores absolute stored size');
+}
+
+function testCollapseGivesSpaceToExpandedNeighbors() {
+  const children: LayoutNode[] = [
+    { type: 'module', id: 'left', moduleId: 'scenes', collapse: 'left' },
+    { type: 'playArea', id: 'center' },
+    { type: 'module', id: 'right', moduleId: 'tokens', collapse: 'right' },
+  ];
+  const openLayout = { left: 18, center: 64, right: 18 };
+
+  const next = layoutAfterCollapsingOnePanel(children, openLayout, 'right');
+
+  assertClose(next.left!, 18, 'left unchanged when only right collapses');
+  assertClose(next.center!, 82, 'center absorbs right width');
+  assertClose(next.right!, 0, 'right fully collapsed');
+}
+
+function testCollapseSecondKeepsFirstAtZero() {
+  const children: LayoutNode[] = [
+    { type: 'module', id: 'left', moduleId: 'scenes', collapse: 'left' },
+    { type: 'playArea', id: 'center' },
+    { type: 'module', id: 'right', moduleId: 'tokens', collapse: 'right' },
+  ];
+  const rightAlreadyCollapsed = { left: 18, center: 82, right: 0 };
+
+  const next = layoutAfterCollapsingOnePanel(
+    children,
+    rightAlreadyCollapsed,
+    'left',
+  );
+
+  assertClose(next.left!, 0, 'left fully collapsed');
+  assertClose(next.center!, 100, 'center takes all remaining space');
+  assertClose(next.right!, 0, 'right stays collapsed at zero');
 }
 
 function testResolveCollapseAssignmentPath() {
@@ -91,6 +148,9 @@ function testResolveCollapseAssignmentPath() {
 function runTests() {
   testExpandRestoresStoredSizes();
   testExpandKeepsOtherCollapsedPanelAtZero();
+  testExpandSecondAfterFirstRestoresAbsoluteSizes();
+  testCollapseGivesSpaceToExpandedNeighbors();
+  testCollapseSecondKeepsFirstAtZero();
   testResolveCollapseAssignmentPath();
   console.log('[automated] layoutPanelChrome tests passed');
 }

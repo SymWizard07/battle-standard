@@ -136,6 +136,8 @@ function liveSyncStateFromStore(
     scalePreviewById: state.scalePreviewById,
     drawStrokeDragPreview: state.drawStrokeDragPreview,
     ephemeralMeasure: state.ephemeralMeasure,
+    ephemeralDrawText: state.ephemeralDrawText,
+    measureVisibleToPlayers: state.measureVisibleToPlayers,
     playerName: state.playerName,
     drawHue: state.drawHue,
   };
@@ -326,14 +328,20 @@ function wireStoreSync(role: SessionRole): void {
       state.movePreviewPositions !== prev.movePreviewPositions ||
       state.drawStrokeDragPreview !== prev.drawStrokeDragPreview ||
       state.scalePreviewById !== prev.scalePreviewById;
-    const ephemeralChanged = state.ephemeralMeasure !== prev.ephemeralMeasure;
+    const ephemeralChanged =
+      state.ephemeralMeasure !== prev.ephemeralMeasure ||
+      state.ephemeralDrawText !== prev.ephemeralDrawText;
+    const measureVisibilityChanged =
+      state.measureVisibleToPlayers !== prev.measureVisibleToPlayers;
     const ephemeralCleared =
-      ephemeralChanged && prev.ephemeralMeasure != null && state.ephemeralMeasure == null;
+      ephemeralChanged &&
+      ((prev.ephemeralMeasure != null && state.ephemeralMeasure == null) ||
+        (prev.ephemeralDrawText != null && state.ephemeralDrawText == null));
 
     if (ephemeralCleared) {
       scheduleLiveSyncPublish(role, { clearEphemeral: true });
     } else if (
-      (previewsChanged || ephemeralChanged) &&
+      (previewsChanged || ephemeralChanged || measureVisibilityChanged) &&
       hasLivePreviews(liveState)
     ) {
       scheduleLiveSyncPublish(role);

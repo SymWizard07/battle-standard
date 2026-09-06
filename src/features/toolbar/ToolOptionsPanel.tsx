@@ -109,13 +109,14 @@ const FOG_SHAPES = FOG_SHAPE_ORDER.map((id, i) => ({
 
 const DRAW_SHAPE_META: Record<
   DrawToolShape,
-  { label: string; icon?: string; inlineIcon?: 'erase' }
+  { label: string; icon?: string; inlineIcon?: 'erase' | 'text' }
 > = {
   stroke: { label: 'Stroke', icon: '/icons/fog/spline.png' },
   line: { label: 'Line', icon: '/icons/measures/ruler.png' },
   cone: { label: 'Cone', icon: '/icons/measures/cone.png' },
   rect: { label: 'Rect', icon: '/icons/fog/rect.png' },
   sphere: { label: 'Circle', icon: '/icons/measures/sphere.png' },
+  text: { label: 'Text', inlineIcon: 'text' },
   erase: { label: 'Erase', inlineIcon: 'erase' },
 };
 
@@ -135,6 +136,22 @@ function DrawShapeIcon({ shape }: { shape: DrawToolShape }) {
       >
         <circle cx="12" cy="12" r="7" />
         <path d="M8 8l8 8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (meta.inlineIcon === 'text') {
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        className="h-5 w-5 shrink-0"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        aria-hidden
+      >
+        <path d="M5 6h14" strokeLinecap="round" />
+        <path d="M12 6v12" strokeLinecap="round" />
+        <path d="M8 18h8" strokeLinecap="round" />
       </svg>
     );
   }
@@ -200,6 +217,8 @@ export function ToolOptionsPanel() {
   const setMeasureKind = useStore((s) => s.setMeasureKind);
   const measurePinMode = useStore((s) => s.measurePinMode);
   const setMeasurePinMode = useStore((s) => s.setMeasurePinMode);
+  const measureVisibleToPlayers = useStore((s) => s.measureVisibleToPlayers);
+  const setMeasureVisibleToPlayers = useStore((s) => s.setMeasureVisibleToPlayers);
   const drawShape = useStore((s) => s.drawShape);
   const setDrawShape = useStore((s) => s.setDrawShape);
   const drawHue = useStore((s) => s.drawHue ?? 0);
@@ -579,6 +598,17 @@ export function ToolOptionsPanel() {
           >
             <ToolOptionShortcutBadge label="Shift" />
           </ToolOptionToggle>
+          <ToolOptionToggle
+            label="Visible to Players"
+            active={measureVisibleToPlayers}
+            onClick={() => setMeasureVisibleToPlayers(!measureVisibleToPlayers)}
+            title={
+              measureVisibleToPlayers
+                ? 'Other players can see your measurements'
+                : 'Hide your measurements from other players'
+            }
+            tone="sky"
+          />
           <ToolOptionButton
             label="Dismiss All Pinned"
             disabled={ownedMeasurementCount === 0}

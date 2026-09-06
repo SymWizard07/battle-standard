@@ -49,7 +49,7 @@ function sampleCampaign(): Campaign {
           },
         ],
         tokens: [],
-        fog: { unexploredMask: [], revealedMask: [], defaultHidden: false },
+        fog: { defaultHidden: false, ops: [] },
         measurements: [],
         drawStrokes: [],
       },

@@ -16,6 +16,11 @@ import {
 } from './measure';
 import { transformWorldPointBetweenMaps, type MapCorner } from './mapGeometry';
 import { colorFromHue } from './playerColor';
+import {
+  drawTextBounds,
+  isDrawTextParams,
+  pointInDrawTextBounds,
+} from './drawText';
 import type {
   ConeMeasureParams,
   CubeMeasureParams,
@@ -334,6 +339,9 @@ export function isValidDrawPreview(preview: DrawPreview): boolean {
     return (preview.points?.length ?? 0) >= 2;
   }
   if (!preview.params) return false;
+  if (preview.kind === 'text') {
+    return isDrawTextParams(preview.params) && preview.params.text.length > 0;
+  }
   if (preview.kind === 'line') {
     const p = preview.params as LineMeasureParams;
     return p.from.x !== p.to.x || p.from.y !== p.to.y;
@@ -425,6 +433,13 @@ export function shiftDrawStroke(
     const p = stroke.params as ConeMeasureParams;
     return { ...stroke, params: { ...p, origin: shiftPoint(p.origin, delta) } };
   }
+  if (stroke.kind === 'text' && isDrawTextParams(stroke.params)) {
+    const p = stroke.params;
+    return {
+      ...stroke,
+      params: { ...p, origin: shiftPoint(p.origin, delta) },
+    };
+  }
   if (stroke.kind === 'sphere' && stroke.params) {
     const p = stroke.params as SphereMeasureParams;
     const shifted = shiftPoint(sphereCenterWorld(p, gridOffset), delta);
@@ -486,6 +501,18 @@ export function transformDrawStrokeForMap(
       },
     };
   }
+  if (stroke.kind === 'text' && isDrawTextParams(stroke.params)) {
+    const p = stroke.params;
+    const scale = newTransform.scale / (oldTransform.scale || 1);
+    return {
+      ...stroke,
+      strokeWidth: Math.max(1, stroke.strokeWidth * scale),
+      params: {
+        ...p,
+        origin: transformPointWithMap(p.origin, oldTransform, newTransform),
+      },
+    };
+  }
   if (stroke.kind === 'sphere' && stroke.params) {
     const p = stroke.params as SphereMeasureParams;
     const centerWorld = sphereCenterWorld(p, gridOffset);
@@ -534,6 +561,9 @@ export function drawStrokeAnchorWorld(
   }
   if (stroke.kind === 'cone') {
     return (stroke.params as ConeMeasureParams).origin;
+  }
+  if (stroke.kind === 'text' && isDrawTextParams(stroke.params)) {
+    return stroke.params.origin;
   }
   if (stroke.kind === 'sphere') {
     return sphereCenterWorld(stroke.params as SphereMeasureParams, gridOffset);
@@ -659,6 +689,18 @@ export function drawStrokeHitByEraser(
     return isPointInCone5e(center, p.origin, p.direction, p.lengthCells, gridOffset);
   }
 
+  if (stroke.kind === 'text' && isDrawTextParams(stroke.params)) {
+    const b = drawTextBounds(stroke.params, stroke.strokeWidth);
+    return circleIntersectsRect(
+      center,
+      eraserRadius,
+      b.minX,
+      b.minY,
+      b.maxX - b.minX,
+      b.maxY - b.minY,
+    );
+  }
+
   return false;
 }
 
@@ -771,6 +813,10 @@ export function drawStrokeHitAtPoint(
       return isPointInConeVtt(world, p.origin, p.direction, length + reach, p.angleDeg);
     }
     return isPointInCone5e(world, p.origin, p.direction, p.lengthCells, gridOffset);
+  }
+
+  if (stroke.kind === 'text' && isDrawTextParams(stroke.params)) {
+    return pointInDrawTextBounds(world, stroke.params, stroke.strokeWidth, reach);
   }
 
   return false;
@@ -908,6 +954,16 @@ export function drawStrokeBounds(
           })();
     if (pts.length === 0) return null;
     return expandBoundsFromPoints(pts, pad);
+  }
+
+  if (stroke.kind === 'text' && isDrawTextParams(stroke.params)) {
+    const b = drawTextBounds(stroke.params, stroke.strokeWidth);
+    return {
+      x: b.minX - pad,
+      y: b.minY - pad,
+      width: Math.max(MIN_STROKE_BOUNDS, b.maxX - b.minX + pad * 2),
+      height: Math.max(MIN_STROKE_BOUNDS, b.maxY - b.minY + pad * 2),
+    };
   }
 
   return null;
@@ -1131,6 +1187,17 @@ export function rotateDrawStroke(
     };
   }
 
+  if (stroke.kind === 'text' && isDrawTextParams(stroke.params)) {
+    const p = stroke.params;
+    return {
+      ...stroke,
+      params: {
+        ...p,
+        origin: rotatePoint(p.origin, center, angleRad),
+      },
+    };
+  }
+
   return stroke;
 }
 
@@ -1231,6 +1298,18 @@ export function scaleDrawStrokeFromCorner(
         center: worldToGridCell(newCenter, gridOffset),
         radiusWorld: newRadius,
         radiusCells: Math.max(0, newRadius / GRID_SIZE_PX - 0.5),
+      },
+    };
+  }
+
+  if (stroke.kind === 'text' && isDrawTextParams(stroke.params)) {
+    const p = stroke.params;
+    return {
+      ...stroke,
+      strokeWidth: Math.max(1, stroke.strokeWidth * scale),
+      params: {
+        ...p,
+        origin: scalePointFromAnchor(p.origin, anchor, scale),
       },
     };
   }

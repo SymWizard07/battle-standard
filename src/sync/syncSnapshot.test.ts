@@ -37,6 +37,8 @@ function runTests(): void {
       scalePreviewById: null,
       drawStrokeDragPreview: null,
       ephemeralMeasure: null,
+      ephemeralDrawText: null,
+      measureVisibleToPlayers: true,
       playerName: 'Player',
       drawHue: 0,
     }),
@@ -49,6 +51,8 @@ function runTests(): void {
     scalePreviewById: null,
     drawStrokeDragPreview: null,
     ephemeralMeasure: null,
+    ephemeralDrawText: null,
+    measureVisibleToPlayers: true,
     playerName: 'Player',
     drawHue: 0,
   });

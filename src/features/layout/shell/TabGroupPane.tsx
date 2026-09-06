@@ -1,4 +1,5 @@
 import type { TabsLayoutNode } from '../schema/layoutSchema';
+import { sharedEdgesBorderClass, useModulePanelEdges } from '../ModulePanelContext';
 import { ModuleSlot } from './ModuleSlot';
 import {
   decodeTabDragPayload,
@@ -29,6 +30,8 @@ export function TabGroupPane({
   onDropTarget,
 }: Props) {
   const activeTab = node.tabs.find((t) => t.id === node.activeTabId) ?? node.tabs[0];
+  const panelEdges = useModulePanelEdges();
+  const panelBorder = sharedEdgesBorderClass(panelEdges);
 
   const handleDragStart = (tabId: string) => (e: React.DragEvent) => {
     if (!editable) return;
@@ -58,7 +61,7 @@ export function TabGroupPane({
 
   return (
     <div
-      className={`flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-slate-900 ${
+      className={`flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-slate-900 ${panelBorder} ${
         highlighted ? 'ring-2 ring-inset ring-sky-500' : ''
       }`}
       onDragOver={
@@ -72,7 +75,7 @@ export function TabGroupPane({
       onDrop={editable ? handleDrop : undefined}
     >
       <div
-        className="flex shrink-0 border-b border-slate-700 bg-slate-900/95"
+        className="flex w-full shrink-0 border-b border-slate-700 bg-slate-900/95"
         role="tablist"
       >
         {node.tabs.map((tab) => {
@@ -85,7 +88,7 @@ export function TabGroupPane({
               aria-selected={active}
               draggable={editable}
               onDragStart={handleDragStart(tab.id)}
-              className={`min-h-9 shrink-0 border-b-2 px-3 text-xs font-medium transition-colors ${
+              className={`flex min-h-9 min-w-0 flex-1 items-center justify-center border-b-2 px-2 text-xs font-medium transition-colors ${
                 active
                   ? 'border-sky-500 text-sky-300'
                   : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -95,7 +98,7 @@ export function TabGroupPane({
                 onTabSelect?.(path, tab.id);
               }}
             >
-              {tab.title}
+              <span className="truncate">{tab.title}</span>
             </button>
           );
         })}

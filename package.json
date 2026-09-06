@@ -43,7 +43,6 @@
     "dexie": "^4.0.11",
     "konva": "^9.3.20",
     "nanoid": "^5.1.5",
-    "polygon-clipping": "^0.15.7",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-konva": "^19.0.7",

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { canEditToken, canMoveToken, syncSelectionNow } from '../sync/syncProvider';
 import { createCampaign, createScene, TOKEN_COLORS } from '../lib/campaignFactory';
+import { isTokenSelectableByPlayer } from '../lib/tokenVisibility';
 import { colorForPlayerName, defaultPlayerColor, hueForPlayerName, snapHue } from '../lib/playerColor';
 import { isMapAssetId } from '../lib/campaignAssets';
 import { saveCampaign, loadCampaignAssets, loadTokenLibraryLayout, saveTokenLibraryLayout, deleteAsset, saveAsset } from '../lib/db';
@@ -9,11 +10,19 @@ import { isTokenLibraryAsset, mapAssetIdsInCampaign } from '../lib/campaignAsset
 import { newId } from '../lib/ids';
 import { loadImageDimensions } from '../lib/mapAlign';
 import { bringMapLayerToFront as reorderMapLayerToFront, normalizeScene, offsetMapTransform, sceneMaps } from '../lib/sceneMaps';
-import { applyFullMapFog, removeFullMapFog } from '../lib/fullMapFog';
 import { normalizeFogState } from '../lib/fog';
-import { mergeFogWithShape } from '../lib/fogOps';
+import {
+  appendFogOp,
+  appendFogOps,
+  fogOpsFromMultiPolygon,
+  fogWithClearedOps,
+  makeFogRectOp,
+  makeFogStrokeOp,
+  type FogCoordMultiPolygon,
+} from '../lib/fogPaint';
+import { invalidateFogMaskCache } from '../lib/fogMaskCache';
 import { computeMapsCentroid, recenterSceneGrid } from '../lib/gridRecenter';
-import { DEFAULT_GRID_OFFSET, setGridOffset } from '../lib/fixedGrid';
+import { DEFAULT_GRID_OFFSET, getGridOffset, setGridOffset } from '../lib/fixedGrid';
 import { quantizeGridSnapStrength } from '../lib/gridSnap';
 import {
   currentMeasurementPinnedBy,
@@ -24,7 +33,6 @@ import { computeMapBounds, frameMapBoundsInViewport } from '../lib/sceneBounds';
 import {
   applyMapTransformToSceneChildren,
   assignDrawStrokeMapLayer,
-  assignFogPolygonMapLayer,
   assignMeasurementMapLayer,
   assignTokenMapLayer,
   mergeMapTransform,
@@ -37,6 +45,7 @@ import {
   clampDrawStrokeWidth,
   DRAW_STROKE_WIDTH_DEFAULT,
 } from '../lib/drawConstants';
+import { drawTextFontSize, nextDrawTextFont, DEFAULT_DRAW_TEXT_FONT } from '../lib/drawText';
 import {
   duplicateDrawStrokes,
   duplicateMeasurements,
@@ -47,7 +56,6 @@ import {
   gridPosForTokenCenteredAtScreen,
   loadBlobImageSize,
 } from '../lib/pasteTokenImage';
-import polygonClipping from 'polygon-clipping';
 import type { Rect } from '../lib/rectOps';
 import type {
   AssetId,
@@ -56,7 +64,7 @@ import type {
   DrawStroke,
   DrawToolShape,
   EphemeralMeasurement,
-  FogPolygon,
+  EphemeralDrawText,
   FogPreview,
   InteractionMode,
   MapTransform,
@@ -72,22 +80,31 @@ import type {
   SyncStatus,
   Token,
   TokenGridPlacement,
+  TokenImageTransform,
   TokenLibraryDropPayload,
   TokenLibraryLayout,
+  TokenOutlineStyle,
+  ImportsInspectTarget,
   TokenVitalityState,
   ToolMode,
   SceneEditMode,
 } from '../lib/types';
-import { DEFAULT_FOG, GLOBAL_CAMPAIGN_ID } from '../lib/types';
+import { GLOBAL_CAMPAIGN_ID } from '../lib/types';
 import {
   addTokenDropToGroup,
+  canAcceptMapTokenDrop,
   defaultTokenLibraryLayout,
+  findTokenLibraryEntry,
+  patchAssetEntriesAppearance,
   syncTokenLibraryLayout,
   removeImportGroupEntries,
   removeEntry,
   moveLibraryEntryToGroup,
   copyTemplatePresetToGroup,
 } from '../lib/tokenLibrary';
+import { inspectTargetFromAssetEntry } from '../lib/importsInspect';
+import { isTemplateTokenAssetId } from '../lib/templateTokenImage';
+import { captureTokenSheet } from '../lib/tokenSheet';
 import {
   cloneSnapshot,
   createInitialHistoryState,
@@ -122,6 +139,7 @@ interface ToolState {
   selectedMapLayerId: string | null;
   measureKind: MeasureKind;
   measurePinMode: boolean;
+  measureVisibleToPlayers: boolean;
   fogBrushCells: number;
   fogMode: 'hide' | 'reveal';
   fogShape: 'stroke' | 'rect' | 'cone' | 'sphere';
@@ -140,12 +158,18 @@ interface ToolState {
   drawShape: DrawToolShape;
   drawHue: number;
   drawStrokeWidth: number;
+  /** Preferred font for the draw text tool (retained across placements). */
+  drawTextFont: string;
+  drawTextBold: boolean;
+  drawTextItalic: boolean;
+  drawTextUnderline: boolean;
   drawPreview: DrawPreview | null;
   setTool: (tool: ToolMode) => void;
   setSceneEditMode: (mode: SceneEditMode) => void;
   setSelectedMapLayerId: (id: string | null) => void;
   setMeasureKind: (k: MeasureKind) => void;
   setMeasurePinMode: (v: boolean) => void;
+  setMeasureVisibleToPlayers: (v: boolean) => void;
   setFogBrushCells: (n: number) => void;
   setFogMode: (mode: 'hide' | 'reveal') => void;
   setFogShape: (shape: 'stroke' | 'rect' | 'cone' | 'sphere') => void;
@@ -163,6 +187,11 @@ interface ToolState {
   setDrawShape: (shape: DrawToolShape) => void;
   setDrawHue: (hue: number) => void;
   setDrawStrokeWidth: (width: number) => void;
+  setDrawTextFont: (font: string) => void;
+  cycleDrawTextFont: () => void;
+  toggleDrawTextBold: () => void;
+  toggleDrawTextItalic: () => void;
+  toggleDrawTextUnderline: () => void;
   setDrawPreview: (preview: DrawPreview | null) => void;
 }
 
@@ -179,6 +208,7 @@ interface SelectionState {
   > | null;
   drawStrokeDragPreview: DrawStroke[] | null;
   ephemeralMeasure: EphemeralMeasurement | null;
+  ephemeralDrawText: EphemeralDrawText | null;
   fadingMeasurements: Record<string, number>;
   selectToken: (id: string, opts?: { additive?: boolean }) => void;
   selectTokens: (ids: string[]) => void;
@@ -201,6 +231,7 @@ interface SelectionState {
   commitTokenScale: (sceneId: SceneId) => void;
   setDrawStrokeDragPreview: (strokes: DrawStroke[] | null) => void;
   setEphemeralMeasure: (m: EphemeralMeasurement | null) => void;
+  setEphemeralDrawText: (t: EphemeralDrawText | null) => void;
   fadeAndRemoveMeasurement: (sceneId: SceneId, id: string) => void;
   fadeAndRemoveMeasurementsForCurrentUser: (sceneId: SceneId) => void;
   clearSelection: () => void;
@@ -226,12 +257,31 @@ export function getMovingTokenDropPayloads(
   for (const id of ids) {
     const token = scene.tokens.find((t) => t.id === id);
     if (token && canMoveToken(token)) {
+      const sheet = captureTokenSheet(token);
       payloads.push({
         tokenId: token.id,
         name: token.name,
         color: token.color,
         imageAssetId: token.imageAssetId,
         footprint: { ...token.footprint },
+        ...(token.imageTransform
+          ? {
+              imageTransform: {
+                offset: { ...token.imageTransform.offset },
+                size: { ...token.imageTransform.size },
+              },
+            }
+          : {}),
+        ...(token.outline
+          ? {
+              outline: {
+                shape: token.outline.shape,
+                offset: { ...token.outline.offset },
+                size: { ...token.outline.size },
+              },
+            }
+          : {}),
+        ...(sheet ? { sheet } : {}),
       });
     }
   }
@@ -241,6 +291,55 @@ export function getMovingTokenDropPayloads(
 interface UiState {
   scenePreviewUrls: Record<string, string>;
   setScenePreviewUrl: (sceneId: SceneId, dataUrl: string) => void;
+  /** Eyedropper: pick a map token into the initiative tracker. */
+  initiativeTokenPickActive: boolean;
+  /** Map token ids already linked to an initiative row. */
+  initiativeLinkedTokenIds: string[];
+  /** Token ids picked while pick is active; consumed by InitiativeTracker. */
+  initiativePendingPickTokenIds: string[];
+  setInitiativeTokenPickActive: (active: boolean) => void;
+  setInitiativeLinkedTokenIds: (ids: string[]) => void;
+  submitInitiativeTokenPick: (tokenIds: string | string[]) => void;
+  clearInitiativePendingPick: () => void;
+  /** Eyedropper: pick a map token into the Imports inspector. */
+  importsTokenPickActive: boolean;
+  importsPendingPickTokenIds: string[];
+  setImportsTokenPickActive: (active: boolean) => void;
+  submitImportsTokenPick: (tokenIds: string | string[]) => void;
+  clearImportsPendingPick: () => void;
+  /** Click-to-pick a library entry into the Imports inspector. */
+  libraryEntryPickActive: boolean;
+  libraryPendingPickEntryId: string | null;
+  setLibraryEntryPickActive: (active: boolean) => void;
+  submitLibraryEntryPick: (entryId: string) => boolean;
+  clearLibraryPendingPick: () => void;
+  /** Shown in the Imports grid when a pick was rejected (e.g. template token). */
+  importsPickError: string | null;
+  setImportsPickError: (message: string | null) => void;
+  /**
+   * Unsaved Imports inspector draft — survives tab switches so the user can
+   * leave and return without losing in-progress appearance edits.
+   */
+  importsInspectTarget: ImportsInspectTarget | null;
+  importsInspectDirty: boolean;
+  importsMaintainAspect: boolean;
+  importsEditOutline: boolean;
+  importsUploadScope: 'campaign' | 'global';
+  setImportsInspectTarget: (
+    target: ImportsInspectTarget | null,
+    opts?: { dirty?: boolean },
+  ) => void;
+  patchImportsInspectTarget: (patch: Partial<ImportsInspectTarget>) => void;
+  updateImportsInspectTarget: (
+    updater: (prev: ImportsInspectTarget) => ImportsInspectTarget,
+  ) => void;
+  setImportsInspectDirty: (dirty: boolean) => void;
+  setImportsMaintainAspect: (v: boolean) => void;
+  setImportsEditOutline: (v: boolean) => void;
+  setImportsUploadScope: (scope: 'campaign' | 'global') => void;
+  /** Token outlined while hovering its initiative row. */
+  initiativeHoveredTokenId: string | null;
+  setInitiativeHoveredTokenId: (id: string | null) => void;
 }
 
 interface SessionState {
@@ -318,8 +417,6 @@ interface CampaignState {
   ) => void;
   toggleVisibleToPlayersForTokens: (sceneId: SceneId, tokenIds: string[]) => void;
   toggleLockedForPlayersForTokens: (sceneId: SceneId, tokenIds: string[]) => void;
-  addFogStroke: (sceneId: SceneId, polygon: FogPolygon, target: 'hidden' | 'revealed') => void;
-  clearFog: (sceneId: SceneId) => void;
   revealAllFog: (sceneId: SceneId) => void;
   setFogDefaultHidden: (sceneId: SceneId, v: boolean) => void;
   applyFogRect: (sceneId: SceneId, rect: Rect, mode: 'hide' | 'reveal') => void;
@@ -365,6 +462,18 @@ interface CampaignState {
   loadGlobalTokenLibraryLayout: () => Promise<void>;
   updateCampaignTokenLibrary: (updater: (layout: TokenLibraryLayout) => TokenLibraryLayout) => void;
   updateGlobalTokenLibrary: (updater: (layout: TokenLibraryLayout) => TokenLibraryLayout) => void;
+  /**
+   * Persist image/outline appearance to library asset entries and every map token
+   * sharing `imageAssetId`.
+   */
+  saveTokenAppearance: (
+    assetId: string,
+    appearance: {
+      footprint: { w: number; h: number };
+      imageTransform: TokenImageTransform;
+      outline: TokenOutlineStyle;
+    },
+  ) => void;
   saveTokenToLibraryGroup: (scope: 'campaign' | 'global', groupId: string) => void;
   discardTokenToLibraryTrash: () => void;
   deleteLibraryEntry: (scope: 'campaign' | 'global', entryId: string) => void;
@@ -510,6 +619,26 @@ export async function flushPersistFromSync(): Promise<void> {
   await useStore.getState().persist();
 }
 
+function prunePlayerTokenSelection(get: () => AppStore): void {
+  const state = get();
+  if (!seesAsPlayer(state.role, state.playerView)) return;
+  const sceneId = state.activeSceneId;
+  const scene = sceneId ? state.campaign?.scenes[sceneId] : undefined;
+  if (!scene) return;
+  const gridOffset = scene.gridOffset ?? getGridOffset();
+  const selectable = new Set(
+    scene.tokens
+      .filter((t) => isTokenSelectableByPlayer(t, scene.fog, scene, gridOffset))
+      .map((t) => t.id),
+  );
+  const next = state.selectedTokenIds.filter((id) => selectable.has(id));
+  if (next.length === state.selectedTokenIds.length) return;
+  if (next.length === 0) get().clearSelection();
+  else {
+    get().selectTokens(next);
+  }
+}
+
 export const useStore = create<AppStore>((set, get) => ({
   scale: 1,
   x: 80,
@@ -549,6 +678,7 @@ export const useStore = create<AppStore>((set, get) => ({
   selectedMapLayerId: null,
   measureKind: 'line',
   measurePinMode: false,
+  measureVisibleToPlayers: true,
   fogBrushCells: 2,
   fogMode: 'hide',
   fogShape: 'stroke',
@@ -565,6 +695,10 @@ export const useStore = create<AppStore>((set, get) => ({
   drawShape: 'stroke',
   drawHue: 0,
   drawStrokeWidth: DRAW_STROKE_WIDTH_DEFAULT,
+  drawTextFont: DEFAULT_DRAW_TEXT_FONT,
+  drawTextBold: false,
+  drawTextItalic: false,
+  drawTextUnderline: false,
   drawPreview: null,
   setTool: (tool) => {
     get().clearSelection();
@@ -573,6 +707,7 @@ export const useStore = create<AppStore>((set, get) => ({
       activeTool: tool,
       fogPreview: null,
       drawPreview: null,
+      ephemeralDrawText: null,
       fogOpaquePreview: false,
       mapEditDragging: false,
     });
@@ -581,6 +716,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setSelectedMapLayerId: (id) => set({ selectedMapLayerId: id }),
   setMeasureKind: (k) => set({ measureKind: k }),
   setMeasurePinMode: (v) => set({ measurePinMode: v }),
+  setMeasureVisibleToPlayers: (v) => set({ measureVisibleToPlayers: v }),
   setFogBrushCells: (n) => set({ fogBrushCells: n }),
   setFogMode: (mode) => set({ fogMode: mode }),
   setFogShape: (shape) => set({ fogShape: shape }),
@@ -604,7 +740,7 @@ export const useStore = create<AppStore>((set, get) => ({
     }));
     syncSelectionNow();
   },
-  setDrawShape: (shape) => set({ drawShape: shape }),
+  setDrawShape: (shape) => set({ drawShape: shape, ephemeralDrawText: null }),
   setDrawHue: (hue) => set({ drawHue: snapHue(hue) }),
   setDrawStrokeWidth: (width) =>
     set((s) => {
@@ -612,6 +748,60 @@ export const useStore = create<AppStore>((set, get) => ({
       return {
         drawStrokeWidth,
         drawPreview: s.drawPreview ? { ...s.drawPreview, strokeWidth: drawStrokeWidth } : null,
+        ephemeralDrawText: s.ephemeralDrawText
+          ? { ...s.ephemeralDrawText, strokeWidth: drawTextFontSize(drawStrokeWidth) }
+          : null,
+      };
+    }),
+  setDrawTextFont: (font) => set({ drawTextFont: font }),
+  cycleDrawTextFont: () =>
+    set((s) => {
+      const drawTextFont = nextDrawTextFont(s.drawTextFont);
+      const ephemeral = s.ephemeralDrawText;
+      return {
+        drawTextFont,
+        ephemeralDrawText: ephemeral
+          ? {
+              ...ephemeral,
+              params: { ...ephemeral.params, fontFamily: drawTextFont },
+            }
+          : null,
+      };
+    }),
+  toggleDrawTextBold: () =>
+    set((s) => {
+      const drawTextBold = !s.drawTextBold;
+      const ephemeral = s.ephemeralDrawText;
+      return {
+        drawTextBold,
+        ephemeralDrawText: ephemeral
+          ? { ...ephemeral, params: { ...ephemeral.params, bold: drawTextBold } }
+          : null,
+      };
+    }),
+  toggleDrawTextItalic: () =>
+    set((s) => {
+      const drawTextItalic = !s.drawTextItalic;
+      const ephemeral = s.ephemeralDrawText;
+      return {
+        drawTextItalic,
+        ephemeralDrawText: ephemeral
+          ? { ...ephemeral, params: { ...ephemeral.params, italic: drawTextItalic } }
+          : null,
+      };
+    }),
+  toggleDrawTextUnderline: () =>
+    set((s) => {
+      const drawTextUnderline = !s.drawTextUnderline;
+      const ephemeral = s.ephemeralDrawText;
+      return {
+        drawTextUnderline,
+        ephemeralDrawText: ephemeral
+          ? {
+              ...ephemeral,
+              params: { ...ephemeral.params, underline: drawTextUnderline },
+            }
+          : null,
       };
     }),
   setDrawPreview: (preview) => set({ drawPreview: preview }),
@@ -625,6 +815,7 @@ export const useStore = create<AppStore>((set, get) => ({
   scalePreviewById: null,
   drawStrokeDragPreview: null,
   ephemeralMeasure: null,
+  ephemeralDrawText: null,
   fadingMeasurements: {},
   selectToken: (id, opts) => {
     if (opts?.additive) {
@@ -775,6 +966,7 @@ export const useStore = create<AppStore>((set, get) => ({
       return { drawStrokeDragPreview: strokes };
     }),
   setEphemeralMeasure: (m) => set({ ephemeralMeasure: m }),
+  setEphemeralDrawText: (t) => set({ ephemeralDrawText: t }),
   fadeAndRemoveMeasurement: (sceneId, id) => {
     startMeasurementFade(sceneId, id);
   },
@@ -802,6 +994,7 @@ export const useStore = create<AppStore>((set, get) => ({
       scalePreviewById: null,
       drawStrokeDragPreview: null,
       ephemeralMeasure: null,
+      ephemeralDrawText: null,
     });
     syncSelectionNow();
   },
@@ -898,6 +1091,154 @@ export const useStore = create<AppStore>((set, get) => ({
     set((s) => ({
       scenePreviewUrls: { ...s.scenePreviewUrls, [sceneId]: dataUrl },
     })),
+  initiativeTokenPickActive: false,
+  initiativeLinkedTokenIds: [],
+  initiativePendingPickTokenIds: [],
+  setInitiativeTokenPickActive: (active) =>
+    set({
+      initiativeTokenPickActive: active,
+      ...(active
+        ? { importsTokenPickActive: false, libraryEntryPickActive: false }
+        : { initiativePendingPickTokenIds: [] }),
+    }),
+  setInitiativeLinkedTokenIds: (ids) => set({ initiativeLinkedTokenIds: ids }),
+  submitInitiativeTokenPick: (tokenIds) => {
+    const { initiativeTokenPickActive, initiativeLinkedTokenIds } = get();
+    if (!initiativeTokenPickActive) return;
+    const linked = new Set(initiativeLinkedTokenIds);
+    const raw = Array.isArray(tokenIds) ? tokenIds : [tokenIds];
+    const next: string[] = [];
+    const seen = new Set<string>();
+    for (const id of raw) {
+      if (!id || linked.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      next.push(id);
+    }
+    if (next.length === 0) return;
+    set({ initiativePendingPickTokenIds: next });
+  },
+  clearInitiativePendingPick: () => set({ initiativePendingPickTokenIds: [] }),
+  importsTokenPickActive: false,
+  importsPendingPickTokenIds: [],
+  setImportsTokenPickActive: (active) =>
+    set({
+      importsTokenPickActive: active,
+      ...(active
+        ? {
+            initiativeTokenPickActive: false,
+            libraryEntryPickActive: false,
+            initiativePendingPickTokenIds: [],
+            importsPickError: null,
+          }
+        : { importsPendingPickTokenIds: [] }),
+    }),
+  submitImportsTokenPick: (tokenIds) => {
+    if (!get().importsTokenPickActive) return;
+    const raw = Array.isArray(tokenIds) ? tokenIds : [tokenIds];
+    const next: string[] = [];
+    const seen = new Set<string>();
+    for (const id of raw) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      next.push(id);
+    }
+    if (next.length === 0) return;
+    set({ importsPendingPickTokenIds: next });
+  },
+  clearImportsPendingPick: () => set({ importsPendingPickTokenIds: [] }),
+  libraryEntryPickActive: false,
+  libraryPendingPickEntryId: null,
+  setLibraryEntryPickActive: (active) =>
+    set({
+      libraryEntryPickActive: active,
+      ...(active
+        ? {
+            initiativeTokenPickActive: false,
+            importsTokenPickActive: false,
+            initiativePendingPickTokenIds: [],
+            importsPendingPickTokenIds: [],
+            importsPickError: null,
+          }
+        : { libraryPendingPickEntryId: null }),
+    }),
+  submitLibraryEntryPick: (entryId) => {
+    if (!get().libraryEntryPickActive || !entryId) return false;
+    const campaign = get().campaign;
+    const globalLayout = get().globalTokenLibraryLayout;
+    const entry = findTokenLibraryEntry(
+      entryId,
+      campaign?.tokenLibrary,
+      globalLayout,
+    );
+    const reject = (message: string) => {
+      set({
+        libraryEntryPickActive: false,
+        libraryPendingPickEntryId: null,
+        importsPickError: message,
+      });
+      return false;
+    };
+    if (!entry) {
+      return reject('Only imported images can be edited in Appearance.');
+    }
+    if (entry.kind === 'template' || (entry.kind === 'asset' && isTemplateTokenAssetId(entry.assetId))) {
+      return reject(
+        'Template tokens can’t be edited in Appearance. Pick an imported image instead.',
+      );
+    }
+    if (entry.kind !== 'asset') {
+      return reject('Only imported images can be edited in Appearance.');
+    }
+    const inCampaign = Boolean(
+      campaign?.tokenLibrary?.entries.some((e) => e.id === entry.id),
+    );
+    const target = inspectTargetFromAssetEntry(
+      entry,
+      inCampaign ? 'campaign' : 'global',
+    );
+    set({
+      libraryEntryPickActive: false,
+      libraryPendingPickEntryId: null,
+      importsInspectTarget: target,
+      importsInspectDirty: false,
+      importsEditOutline: false,
+      importsPickError: null,
+    });
+    return true;
+  },
+  clearLibraryPendingPick: () => set({ libraryPendingPickEntryId: null }),
+  importsPickError: null,
+  setImportsPickError: (message) => set({ importsPickError: message }),
+  importsInspectTarget: null,
+  importsInspectDirty: false,
+  importsMaintainAspect: true,
+  importsEditOutline: false,
+  importsUploadScope: 'campaign',
+  setImportsInspectTarget: (target, opts) =>
+    set({
+      importsInspectTarget: target,
+      importsInspectDirty: opts?.dirty ?? false,
+      ...(target == null ? { importsEditOutline: false } : {}),
+    }),
+  patchImportsInspectTarget: (patch) => {
+    const prev = get().importsInspectTarget;
+    if (!prev) return;
+    set({
+      importsInspectTarget: { ...prev, ...patch },
+      importsInspectDirty: true,
+    });
+  },
+  updateImportsInspectTarget: (updater) => {
+    const prev = get().importsInspectTarget;
+    if (!prev) return;
+    set({ importsInspectTarget: updater(prev) });
+  },
+  setImportsInspectDirty: (dirty) => set({ importsInspectDirty: dirty }),
+  setImportsMaintainAspect: (v) => set({ importsMaintainAspect: v }),
+  setImportsEditOutline: (v) => set({ importsEditOutline: v }),
+  setImportsUploadScope: (scope) => set({ importsUploadScope: scope }),
+  initiativeHoveredTokenId: null,
+  setInitiativeHoveredTokenId: (id) => set({ initiativeHoveredTokenId: id }),
 
   role: 'gm',
   playerView: false,
@@ -913,6 +1254,7 @@ export const useStore = create<AppStore>((set, get) => ({
       playerView: role === 'player' ? false : get().playerView,
       ...(drawHue !== undefined ? { drawHue } : {}),
     });
+    prunePlayerTokenSelection(get);
   },
   setPlayerView: (v) => {
     if (get().role !== 'gm') return;
@@ -923,6 +1265,7 @@ export const useStore = create<AppStore>((set, get) => ({
         set({ activeTool: 'pan' });
       }
     }
+    prunePlayerTokenSelection(get);
   },
   setRoomCode: (code) => set({ roomCode: code }),
   setPlayerName: (name) => {
@@ -1058,6 +1401,7 @@ export const useStore = create<AppStore>((set, get) => ({
         setGridOffset(DEFAULT_GRID_OFFSET);
       }
       void get().hydrateCampaignTokenLibrary();
+      prunePlayerTokenSelection(get);
     });
   },
 
@@ -1139,6 +1483,7 @@ export const useStore = create<AppStore>((set, get) => ({
       redoStack: nextHistory.redoStack,
     });
     schedulePersist(get);
+    prunePlayerTokenSelection(get);
   },
   addScene: (name) => {
     const { campaign } = get();
@@ -1513,189 +1858,39 @@ export const useStore = create<AppStore>((set, get) => ({
       };
     });
   },
-  addFogStroke: (sceneId, polygon, target) => {
-    get().updateScene(sceneId, (s) => {
-      const key = target === 'hidden' ? 'unexploredMask' : 'revealedMask';
-      const assigned = assignFogPolygonMapLayer(polygon, s);
-      return {
-        ...s,
-        fog: normalizeFogState({
-          ...s.fog,
-          [key]: [...s.fog[key], assigned],
-        }),
-      };
-    });
-  },
   applyFogRect: (sceneId, rect, mode) => {
-    get().updateScene(sceneId, (s) => {
-      type Pair = [number, number];
-      type Ring = Pair[];
-      type Polygon = Ring[];
-      type MultiPolygon = Polygon[];
-
-      const rectToPoly = (r: Rect): Polygon => [
-        [
-          [r.x, r.y],
-          [r.x + r.w, r.y],
-          [r.x + r.w, r.y + r.h],
-          [r.x, r.y + r.h],
-          [r.x, r.y],
-        ],
-      ];
-
-      const multiToFog = (mp: MultiPolygon): FogPolygon[] => {
-        const polys: FogPolygon[] = [];
-        for (const poly of mp) {
-          if (!poly || poly.length === 0) continue;
-          const rings: { x: number; y: number }[][] = [];
-          for (const ring of poly) {
-            if (!ring || ring.length < 4) continue;
-            rings.push(ring.slice(0, -1).map(([x, y]) => ({ x, y })));
-          }
-          if (rings.length === 0) continue;
-          polys.push({ id: newId(), rings } as FogPolygon);
-        }
-        return polys.map((p) => assignFogPolygonMapLayer(p, s));
-      };
-
-      const rectMp: MultiPolygon = [rectToPoly(rect)];
-      const { unexploredMp, revealedMp } = mergeFogWithShape(s.fog, rectMp, mode);
-      return {
-        ...s,
-        fog: normalizeFogState({
-          ...s.fog,
-          unexploredMask: multiToFog(unexploredMp),
-          revealedMask: multiToFog(revealedMp),
-        }),
-      };
-    });
-  },
-  applyFogStroke: (sceneId, points, radius, mode) => {
-    get().updateScene(sceneId, (s) => {
-      type Pair = [number, number];
-      type Ring = Pair[];
-      type Polygon = Ring[];
-      type MultiPolygon = Polygon[];
-
-      const multiToFog = (mp: MultiPolygon): FogPolygon[] => {
-        const polys: FogPolygon[] = [];
-        for (const poly of mp) {
-          if (!poly || poly.length === 0) continue;
-          const rings: { x: number; y: number }[][] = [];
-          for (const ring of poly) {
-            if (!ring || ring.length < 4) continue;
-            rings.push(ring.slice(0, -1).map(([x, y]) => ({ x, y })));
-          }
-          if (rings.length === 0) continue;
-          polys.push({ id: newId(), rings } as FogPolygon);
-        }
-        return polys.map((p) => assignFogPolygonMapLayer(p, s));
-      };
-
-      const strokeToPoly = (pts: { x: number; y: number }[]): MultiPolygon => {
-        if (pts.length === 0 || radius <= 0) return [];
-        const steps = 16;
-        const circle = (cx: number, cy: number): Polygon => {
-          const ring: Ring = [];
-          for (let i = 0; i < steps; i++) {
-            const a = (2 * Math.PI * i) / steps;
-            ring.push([cx + Math.cos(a) * radius, cy + Math.sin(a) * radius]);
-          }
-          ring.push(ring[0]!);
-          return [ring];
-        };
-
-        const capsule = (a: { x: number; y: number }, b: { x: number; y: number }): MultiPolygon => {
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
-          const len = Math.hypot(dx, dy);
-          if (len < 1e-6) return [circle(a.x, a.y)];
-          const ux = dx / len;
-          const uy = dy / len;
-          const px = -uy;
-          const py = ux;
-          const ring: Ring = [
-            [a.x + px * radius, a.y + py * radius],
-            [b.x + px * radius, b.y + py * radius],
-            [b.x - px * radius, b.y - py * radius],
-            [a.x - px * radius, a.y - py * radius],
-            [a.x + px * radius, a.y + py * radius],
-          ];
-          return polygonClipping.union([circle(a.x, a.y)], [circle(b.x, b.y)], [ring]) as MultiPolygon;
-        };
-
-        let mp: MultiPolygon = [];
-        mp = polygonClipping.union(mp, circle(pts[0]!.x, pts[0]!.y)) as MultiPolygon;
-        for (let i = 1; i < pts.length; i++) {
-          const seg = capsule(pts[i - 1]!, pts[i]!);
-          mp = polygonClipping.union(mp, seg) as MultiPolygon;
-        }
-        return mp;
-      };
-
-      const strokeMp = strokeToPoly(points);
-      const { unexploredMp, revealedMp } = mergeFogWithShape(s.fog, strokeMp, mode);
-      return {
-        ...s,
-        fog: normalizeFogState({
-          ...s.fog,
-          unexploredMask: multiToFog(unexploredMp),
-          revealedMask: multiToFog(revealedMp),
-        }),
-      };
-    });
-  },
-  applyFogMulti: (sceneId, mp, mode) => {
-    get().updateScene(sceneId, (s) => {
-      type Pair = [number, number];
-      type Ring = Pair[];
-      type Polygon = Ring[];
-      type MultiPolygon = Polygon[];
-
-      const multiToFog = (mp: MultiPolygon): FogPolygon[] => {
-        const polys: FogPolygon[] = [];
-        for (const poly of mp) {
-          if (!poly || poly.length === 0) continue;
-          const rings: { x: number; y: number }[][] = [];
-          for (const ring of poly) {
-            if (!ring || ring.length < 4) continue;
-            rings.push(ring.slice(0, -1).map(([x, y]) => ({ x, y })));
-          }
-          if (rings.length === 0) continue;
-          polys.push({ id: newId(), rings } as FogPolygon);
-        }
-        return polys.map((p) => assignFogPolygonMapLayer(p, s));
-      };
-
-      const shapeMp = mp as MultiPolygon;
-      const { unexploredMp, revealedMp } = mergeFogWithShape(s.fog, shapeMp, mode);
-      return {
-        ...s,
-        fog: normalizeFogState({
-          ...s.fog,
-          unexploredMask: multiToFog(unexploredMp),
-          revealedMask: multiToFog(revealedMp),
-        }),
-      };
-    });
-  },
-  clearFog: (sceneId) => {
     get().updateScene(sceneId, (s) => ({
       ...s,
-      fog: { ...DEFAULT_FOG },
+      fog: appendFogOp(normalizeFogState(s.fog), makeFogRectOp(rect, mode)),
+    }));
+  },
+  applyFogStroke: (sceneId, points, radius, mode) => {
+    if (points.length === 0 || radius <= 0) return;
+    get().updateScene(sceneId, (s) => ({
+      ...s,
+      fog: appendFogOp(normalizeFogState(s.fog), makeFogStrokeOp(points, radius, mode)),
+    }));
+  },
+  applyFogMulti: (sceneId, mp, mode) => {
+    const ops = fogOpsFromMultiPolygon(mp as FogCoordMultiPolygon, mode);
+    if (ops.length === 0) return;
+    get().updateScene(sceneId, (s) => ({
+      ...s,
+      fog: appendFogOps(normalizeFogState(s.fog), ops),
     }));
   },
   revealAllFog: (sceneId) => {
+    invalidateFogMaskCache();
     get().updateScene(sceneId, (s) => ({
       ...s,
-      fog: { unexploredMask: [], revealedMask: [], defaultHidden: false },
+      fog: fogWithClearedOps(false),
     }));
   },
   setFogDefaultHidden: (sceneId, v) => {
-    get().updateScene(sceneId, (s) => {
-      const next = v ? applyFullMapFog(s) : removeFullMapFog(s);
-      return { ...next, fog: normalizeFogState(next.fog) };
-    });
+    get().updateScene(sceneId, (s) => ({
+      ...s,
+      fog: fogWithClearedOps(v),
+    }));
   },
   addMeasurement: (sceneId, m) => {
     get().updateScene(sceneId, (s) => ({
@@ -1871,8 +2066,58 @@ export const useStore = create<AppStore>((set, get) => ({
     void saveTokenLibraryLayout(GLOBAL_CAMPAIGN_ID, layout);
     scheduleStableGlobalMirror();
   },
+  saveTokenAppearance: (assetId, appearance) => {
+    get().commitCampaignUpdate((c) => {
+      const baseLib = c.tokenLibrary ?? defaultTokenLibraryLayout([]);
+      const tokenLibrary = patchAssetEntriesAppearance(baseLib, assetId, appearance);
+      let scenesChanged = false;
+      const scenes = { ...c.scenes };
+      for (const [sceneId, scene] of Object.entries(scenes)) {
+        let sceneChanged = false;
+        const tokens = scene.tokens.map((t) => {
+          if (t.imageAssetId !== assetId) return t;
+          sceneChanged = true;
+          return {
+            ...t,
+            footprint: { ...appearance.footprint },
+            imageTransform: {
+              offset: { ...appearance.imageTransform.offset },
+              size: { ...appearance.imageTransform.size },
+            },
+            outline: {
+              shape: appearance.outline.shape,
+              offset: { ...appearance.outline.offset },
+              size: { ...appearance.outline.size },
+            },
+          };
+        });
+        if (sceneChanged) {
+          scenesChanged = true;
+          scenes[sceneId] = { ...scene, tokens };
+        }
+      }
+      const libChanged = tokenLibrary !== baseLib;
+      if (!libChanged && !scenesChanged) return c;
+      return {
+        ...c,
+        ...(libChanged ? { tokenLibrary } : {}),
+        ...(scenesChanged ? { scenes } : {}),
+        updatedAt: Date.now(),
+      };
+    });
+    get().updateGlobalTokenLibrary((layout) =>
+      patchAssetEntriesAppearance(layout, assetId, appearance),
+    );
+  },
   saveTokenToLibraryGroup: (scope, groupId) => {
     const state = get();
+    const layout =
+      scope === 'campaign'
+        ? (state.campaign?.tokenLibrary ?? defaultTokenLibraryLayout([]))
+        : (state.globalTokenLibraryLayout ?? defaultTokenLibraryLayout([]));
+    const targetGroup = layout.groups.find((g) => g.id === groupId);
+    if (!targetGroup || !canAcceptMapTokenDrop(targetGroup)) return;
+
     let payloads: TokenLibraryDropPayload[] = [];
     if (state.interactionMode === 'moving') {
       payloads = getMovingTokenDropPayloads(
@@ -2059,6 +2304,7 @@ export function pinEphemeralMeasurement(
     color: defaultPlayerColor(state.playerName, state.drawHue ?? 0),
     displayStyle,
     pinnedBy: currentMeasurementPinnedBy(state.role, state.playerName),
+    visibleToPlayers: state.measureVisibleToPlayers,
   };
   useStore.getState().addMeasurement(sceneId, m);
 }

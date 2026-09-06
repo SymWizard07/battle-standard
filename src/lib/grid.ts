@@ -12,6 +12,26 @@ export function screenToWorld(
   };
 }
 
+/** Visible world AABB for the stage viewport. */
+export function viewportWorldBounds(
+  stagePos: Point,
+  scale: number,
+  stageSize: { width: number; height: number },
+): WorldBounds {
+  const a = screenToWorld({ x: 0, y: 0 }, stagePos, scale);
+  const b = screenToWorld(
+    { x: stageSize.width, y: stageSize.height },
+    stagePos,
+    scale,
+  );
+  return {
+    minX: Math.min(a.x, b.x),
+    minY: Math.min(a.y, b.y),
+    maxX: Math.max(a.x, b.x),
+    maxY: Math.max(a.y, b.y),
+  };
+}
+
 export function worldToScreen(
   world: Point,
   stagePos: Point,

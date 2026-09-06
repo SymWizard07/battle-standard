@@ -412,6 +412,32 @@ export function findPlayAreaPath(root: LayoutNode, path: LayoutPath = []): Layou
   return null;
 }
 
+export type ModuleLayoutLocation =
+  | { kind: 'tabs'; path: LayoutPath; tabId: string }
+  | { kind: 'module'; path: LayoutPath };
+
+/** Locate a module anywhere in the layout tree (standalone or inside a tab group). */
+export function findModuleInLayout(
+  root: LayoutNode,
+  moduleId: ModuleId,
+  path: LayoutPath = [],
+): ModuleLayoutLocation | null {
+  if (root.type === 'module' && root.moduleId === moduleId) {
+    return { kind: 'module', path };
+  }
+  if (root.type === 'tabs') {
+    const tab = root.tabs.find((t) => t.moduleId === moduleId);
+    if (tab) return { kind: 'tabs', path, tabId: tab.id };
+  }
+  if (root.type === 'split') {
+    for (let i = 0; i < root.children.length; i++) {
+      const found = findModuleInLayout(root.children[i]!, moduleId, [...path, i]);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 function pathsEqual(a: LayoutPath, b: LayoutPath): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
 }

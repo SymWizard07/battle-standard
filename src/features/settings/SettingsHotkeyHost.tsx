@@ -1,14 +1,9 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
+import { shouldIgnoreGlobalHotkey } from '../../lib/keyboardTarget';
+import { useStore } from '../../store/useStore';
 import { SettingsModal } from './SettingsModal';
 import { useSettingsUiStore } from './settingsUiStore';
-
-function isTypingTarget(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null;
-  if (!el) return false;
-  const tag = el.tagName?.toLowerCase();
-  return tag === 'input' || tag === 'textarea' || el.isContentEditable;
-}
 
 function isSettingsHotkey(e: KeyboardEvent): boolean {
   if (e.key === 'F2') return true;
@@ -28,7 +23,8 @@ export function SettingsHotkeyHost() {
     if (!onCampaign) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (isTypingTarget(e.target)) return;
+      if (shouldIgnoreGlobalHotkey(e.target)) return;
+      if (useStore.getState().ephemeralDrawText) return;
       if (!isSettingsHotkey(e)) return;
       e.preventDefault();
       e.stopPropagation();

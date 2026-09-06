@@ -6,7 +6,9 @@ import { ToolOptionsBar } from '../toolbar/ToolOptionsBar';
 import type { ModuleId } from './schema/layoutSchema';
 import { useLayoutModuleContext } from './LayoutModuleContext';
 import { CanvasModule } from './modules/CanvasModule';
+import { ImportsModule } from './modules/ImportsModule';
 import { InfoModule } from './modules/InfoModule';
+import { InitiativeModule } from './modules/InitiativeModule';
 import { SettingsModule } from './modules/SettingsModule';
 
 function ScenesModule() {
@@ -49,7 +51,9 @@ function CanvasModuleWrapper() {
 
 export const moduleRegistry: Record<ModuleId, ComponentType> = {
   scenes: ScenesModule,
+  initiative: InitiativeModule,
   tokens: TokensModule,
+  imports: ImportsModule,
   settings: SettingsModule,
   toolOptions: ToolOptionsModule,
   toolbar: ToolbarModule,

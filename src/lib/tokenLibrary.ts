@@ -2,11 +2,22 @@ import { TOKEN_COLORS } from './campaignFactory';
 import { templateTokenIconForColor } from './templateTokenIconSources';
 import { newId } from './ids';
 import type {
+  TokenImageTransform,
   TokenLibraryDropPayload,
   TokenLibraryEntry,
   TokenLibraryGroup,
   TokenLibraryLayout,
+  TokenOutlineStyle,
+  TokenSheetSnapshot,
 } from './types';
+
+function cloneTokenSheet(sheet: TokenSheetSnapshot): TokenSheetSnapshot {
+  return {
+    ...sheet,
+    ...(sheet.speeds ? { speeds: sheet.speeds.map((s) => ({ ...s })) } : {}),
+    ...(sheet.skills ? { skills: sheet.skills.map((s) => ({ ...s })) } : {}),
+  };
+}
 
 export const IMPORT_GROUP_ID = '__import__';
 export const TEMPLATES_GROUP_ID = '__templates__';
@@ -252,6 +263,25 @@ export function addTokenDropToGroup(
       assetId: payload.imageAssetId,
       name: payload.name,
       order,
+      footprint: { ...payload.footprint },
+      ...(payload.imageTransform
+        ? {
+            imageTransform: {
+              offset: { ...payload.imageTransform.offset },
+              size: { ...payload.imageTransform.size },
+            },
+          }
+        : {}),
+      ...(payload.outline
+        ? {
+            outline: {
+              shape: payload.outline.shape,
+              offset: { ...payload.outline.offset },
+              size: { ...payload.outline.size },
+            },
+          }
+        : {}),
+      ...(payload.sheet ? { sheet: cloneTokenSheet(payload.sheet) } : {}),
     };
   } else {
     entry = {
@@ -262,6 +292,7 @@ export function addTokenDropToGroup(
       name: payload.name,
       footprint: { ...payload.footprint },
       order,
+      ...(payload.sheet ? { sheet: cloneTokenSheet(payload.sheet) } : {}),
     };
   }
   return { ...layout, entries: [...layout.entries, entry] };
@@ -313,6 +344,11 @@ export function removeUserGroup(
 }
 
 export function canAcceptLibraryEntryDrop(group: TokenLibraryGroup): boolean {
+  return group.kind === 'user';
+}
+
+/** Map tokens and library reorganize drops — not Quick Import or templates. */
+export function canAcceptMapTokenDrop(group: TokenLibraryGroup): boolean {
   return group.kind === 'user';
 }
 
@@ -406,3 +442,44 @@ export const TEMPLATE_PRESETS = TOKEN_COLORS.map((color, i) => ({
   templateColor: color,
   name: templateTokenDisplayName(color),
 }));
+
+export function findTokenLibraryEntry(
+  entryId: string,
+  campaignLibrary: TokenLibraryLayout | null | undefined,
+  globalLibrary: TokenLibraryLayout | null | undefined,
+): TokenLibraryEntry | undefined {
+  const fromCampaign = campaignLibrary?.entries.find((e) => e.id === entryId);
+  if (fromCampaign) return fromCampaign;
+  return globalLibrary?.entries.find((e) => e.id === entryId);
+}
+
+/** Update every asset entry with this assetId in a library layout. */
+export function patchAssetEntriesAppearance(
+  layout: TokenLibraryLayout,
+  assetId: string,
+  appearance: {
+    footprint: { w: number; h: number };
+    imageTransform: TokenImageTransform;
+    outline: TokenOutlineStyle;
+  },
+): TokenLibraryLayout {
+  let changed = false;
+  const entries = layout.entries.map((e) => {
+    if (e.kind !== 'asset' || e.assetId !== assetId) return e;
+    changed = true;
+    return {
+      ...e,
+      footprint: { ...appearance.footprint },
+      imageTransform: {
+        offset: { ...appearance.imageTransform.offset },
+        size: { ...appearance.imageTransform.size },
+      },
+      outline: {
+        shape: appearance.outline.shape,
+        offset: { ...appearance.outline.offset },
+        size: { ...appearance.outline.size },
+      },
+    };
+  });
+  return changed ? { ...layout, entries } : layout;
+}

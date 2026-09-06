@@ -1,6 +1,10 @@
 import type { TokenLibraryEntry } from '../../lib/types';
 import { StyledTokenName } from '../../components/StyledTokenName';
 import { plainTokenName } from '../../lib/tokenNameMarkup';
+import { useStore } from '../../store/useStore';
+import { useDeviceClass } from '../layout/useDeviceClass';
+import { useLayoutStore } from '../layout/layoutStore';
+import { isTemplateTokenAssetId } from '../../lib/templateTokenImage';
 import { TemplateTokenThumb } from './TemplateTokenThumb';
 
 interface Props {
@@ -20,6 +24,15 @@ export function TokenLibraryEntryThumb({
   onDragStart,
   onDragEnd,
 }: Props) {
+  const libraryEntryPickActive = useStore((s) => s.libraryEntryPickActive);
+  const submitLibraryEntryPick = useStore((s) => s.submitLibraryEntryPick);
+  const device = useDeviceClass();
+  const activateModule = useLayoutStore((s) => s.activateModule);
+
+  const pickableForImports =
+    entry.kind === 'asset' && !isTemplateTokenAssetId(entry.assetId);
+  const pickBlocked = libraryEntryPickActive && !pickableForImports;
+
   const dragPayload = (e: React.DragEvent) => {
     e.dataTransfer.setData('token-library-entry-id', entry.id);
     e.dataTransfer.effectAllowed = 'move';
@@ -38,14 +51,33 @@ export function TokenLibraryEntryThumb({
 
   return (
     <div
-      draggable
+      draggable={!libraryEntryPickActive}
+      onClick={() => {
+        if (!libraryEntryPickActive) return;
+        submitLibraryEntryPick(entry.id);
+        activateModule(device, 'imports');
+      }}
       onDragStart={(e) => {
+        if (libraryEntryPickActive) {
+          e.preventDefault();
+          return;
+        }
         dragPayload(e);
         onDragStart?.();
       }}
       onDragEnd={() => onDragEnd?.()}
-      className={`group cursor-grab active:cursor-grabbing ${isDragging ? 'opacity-40' : ''}`}
-      title={plainTokenName(entry.name)}
+      className={`group ${
+        pickBlocked
+          ? 'cursor-pointer opacity-40 ring-1 ring-transparent hover:ring-amber-500/80'
+          : libraryEntryPickActive
+            ? 'cursor-pointer ring-1 ring-transparent hover:ring-sky-400'
+            : 'cursor-grab active:cursor-grabbing'
+      } ${isDragging ? 'opacity-40' : ''}`}
+      title={
+        pickBlocked
+          ? 'Template and color tokens can’t be edited in Appearance'
+          : plainTokenName(entry.name)
+      }
     >
       <div className="relative aspect-square overflow-hidden rounded-lg border border-slate-600 bg-slate-800">
         {entry.kind === 'asset' ? (

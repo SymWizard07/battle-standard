@@ -1,4 +1,5 @@
 import { DEFAULT_GRID_OFFSET } from './fixedGrid';
+import { normalizeFogState } from './fog';
 import { assignMissingMapParents } from './mapObjectParent';
 import { mapLocalToWorld, worldToMapLocal } from './mapGeometry';
 import type { MapTransform, Point, Scene, SceneMapLayer } from './types';
@@ -13,6 +14,7 @@ export function normalizeScene(scene: Scene): Scene {
   return assignMissingMapParents({
     ...scene,
     maps,
+    fog: normalizeFogState(scene.fog),
     gridOffset: scene.gridOffset ?? DEFAULT_GRID_OFFSET,
     measurements: scene.measurements ?? [],
     drawStrokes: scene.drawStrokes ?? [],

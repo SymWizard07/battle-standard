@@ -13,6 +13,10 @@ import {
 import { tokenWorldTopLeft } from '../../lib/grid';
 import { GRID_SIZE_PX } from '../../lib/fixedGrid';
 import { GM_HIDDEN_TOKEN_OPACITY, isTokenVisibleToPlayers } from '../../lib/tokenVisibility';
+import {
+  imageTransformToLocalPx,
+  outlineToLocalPx,
+} from '../../lib/tokenImageFit';
 import type { Token, TokenGridPlacement } from '../../lib/types';
 import { TokenStyledNameText } from './TokenStyledNameText';
 import { useStore } from '../../store/useStore';
@@ -79,13 +83,24 @@ function useLoadedImage(src: string | undefined) {
       setImg(null);
       return;
     }
+    let cancelled = false;
+    setImg(null);
     const image = new window.Image();
     if (src.startsWith('http://') || src.startsWith('https://')) {
       image.crossOrigin = 'anonymous';
     }
-    image.onload = () => setImg(image);
-    image.onerror = () => setImg(null);
+    image.onload = () => {
+      if (!cancelled) setImg(image);
+    };
+    image.onerror = () => {
+      if (!cancelled) setImg(null);
+    };
     image.src = src;
+    return () => {
+      cancelled = true;
+      image.onload = null;
+      image.onerror = null;
+    };
   }, [src]);
   return img;
 }
@@ -107,6 +122,8 @@ interface Props {
   hideMovingOffMap?: boolean;
   /** GM view: render player-hidden tokens at reduced opacity. */
   gmShowsHiddenTokens?: boolean;
+  /** When set, these tokens render at reduced opacity (e.g. already in initiative). */
+  dimmedTokenIds?: ReadonlySet<string>;
   onTokenTap: (tokenId: string) => void;
   onTokenHover: (tokenId: string | null) => void;
 }
@@ -181,6 +198,7 @@ const TokenNode = memo(function TokenNode({
   selectionColor,
   peerSelectionColor,
   gmShowsHiddenTokens,
+  dimmed = false,
 }: {
   token: Token;
   assetUrls: Record<string, string>;
@@ -191,6 +209,7 @@ const TokenNode = memo(function TokenNode({
   selectionColor: string;
   peerSelectionColor?: string;
   gmShowsHiddenTokens: boolean;
+  dimmed?: boolean;
 }) {
   const tl = previewPlacement
     ? tokenWorldTopLeft(previewPlacement)
@@ -207,19 +226,46 @@ const TokenNode = memo(function TokenNode({
   );
   const opaqueShape = useImageOpaqueShape(imgUrl, tokenImg);
   const hasImageShape = Boolean(imgUrl && opaqueShape);
-  const selectionCircle = selectionCircleFromOpaqueShape(
-    hasImageShape ? opaqueShape : null,
-    w,
-    h,
-    2,
-  );
-  const selectionRect = selectionRectFromOpaqueBounds(
-    hasImageShape && opaqueShape?.kind === 'rect' ? opaqueShape.bounds : null,
-    w,
-    h,
-    imgUrl ? 2 : 4,
-  );
-  const n = token.statusEffects.length;
+  const explicitOutline = token.outline
+    ? outlineToLocalPx(footprint, token.outline, 2)
+    : null;
+  const selectionCircle = explicitOutline
+    ? explicitOutline.kind === 'circle'
+      ? {
+          x: explicitOutline.x,
+          y: explicitOutline.y,
+          radius: explicitOutline.radius,
+        }
+      : null
+    : selectionCircleFromOpaqueShape(
+        hasImageShape ? opaqueShape : null,
+        w,
+        h,
+        2,
+      );
+  const selectionRect = explicitOutline
+    ? explicitOutline.kind === 'rect'
+      ? {
+          x: explicitOutline.x,
+          y: explicitOutline.y,
+          width: explicitOutline.width,
+          height: explicitOutline.height,
+        }
+      : {
+          x: -4,
+          y: -4,
+          width: w + 8,
+          height: h + 8,
+        }
+    : selectionRectFromOpaqueBounds(
+        hasImageShape && opaqueShape?.kind === 'rect' ? opaqueShape.bounds : null,
+        w,
+        h,
+        imgUrl ? 2 : 4,
+      );
+  const imageLocal = imageTransformToLocalPx(footprint, token.imageTransform);
+  const statusEffects = token.statusEffects ?? [];
+  const n = statusEffects.length;
   const ringR = Math.max(w, h) / 2 + STATUS_ICON_SIZE / 2 + 2;
 
   const deadPad = Math.min(w, h) * 0.12;
@@ -234,21 +280,29 @@ const TokenNode = memo(function TokenNode({
   const bloodiedY = (h - bloodiedSize) / 2;
   const ghostHidden =
     gmShowsHiddenTokens && !isTokenVisibleToPlayers(token);
+  const baseOpacity = ghostHidden ? GM_HIDDEN_TOKEN_OPACITY : 1;
+  const opacity = dimmed ? baseOpacity * 0.35 : baseOpacity;
   const outlineStroke = selected
     ? selectionColor
     : (peerSelectionColor ?? highlightColor);
   const showOutline =
     Boolean(outlineStroke) &&
-    (!imgUrl || hasImageShape || selected || Boolean(peerSelectionColor));
+    (Boolean(token.outline) ||
+      !imgUrl ||
+      hasImageShape ||
+      selected ||
+      Boolean(peerSelectionColor));
+  // Placeholder while asset URL is missing, image is still loading, or load failed.
+  const showPlaceholder = !tokenImg;
 
   return (
     <Group
       x={tl.x}
       y={tl.y}
-      rotation={token.rotation}
+      rotation={token.rotation ?? 0}
       offsetX={0}
       offsetY={0}
-      opacity={ghostHidden ? GM_HIDDEN_TOKEN_OPACITY : 1}
+      opacity={opacity}
     >
       {showOutline ? (
         <TokenSelectionOutline
@@ -258,31 +312,34 @@ const TokenNode = memo(function TokenNode({
           stroke={outlineStroke!}
         />
       ) : null}
-      {tokenImg ? (
-        <Image
-          image={tokenImg}
-          width={w}
-          height={h}
-          listening={false}
-        />
-      ) : !imgUrl ? (
+      {showPlaceholder ? (
         <Group listening={false}>
           <Rect
             width={w}
             height={h}
-            fill={token.color}
+            fill={token.color || '#64748b'}
             opacity={0.85}
             cornerRadius={6}
             stroke="#0f172a"
             strokeWidth={2}
           />
           <TokenStyledNameText
-            raw={token.name}
+            raw={token.name ?? ''}
             width={w}
             height={h}
             fontSize={Math.min(14, GRID_SIZE_PX * 0.35)}
-          />        </Group>
-      ) : null}
+          />
+        </Group>
+      ) : (
+        <Image
+          image={tokenImg}
+          x={imageLocal.x}
+          y={imageLocal.y}
+          width={imageLocal.width}
+          height={imageLocal.height}
+          listening={false}
+        />
+      )}
       {token.vitalityState === 'dead' ? (
         <Group listening={false}>
           <Line
@@ -323,12 +380,12 @@ const TokenNode = memo(function TokenNode({
           listening={false}
         />
       ) : null}
-      {token.statusEffects.map((sid, i) => {
+      {statusEffects.map((sid, i) => {
         const meta = statusMeta(sid);
-        const angle = (2 * Math.PI * i) / n - Math.PI / 2;
+        const angle = (2 * Math.PI * i) / Math.max(n, 1) - Math.PI / 2;
         const bx = cx - tl.x + Math.cos(angle) * ringR;
         const by = cy - tl.y + Math.sin(angle) * ringR;
-        return <StatusIconBadge key={sid} x={bx} y={by} meta={meta} />;
+        return <StatusIconBadge key={`${sid}-${i}`} x={bx} y={by} meta={meta} />;
       })}
       <Rect width={w} height={h} fill="rgba(0,0,0,0.001)" />
     </Group>
@@ -340,6 +397,7 @@ const TokenNode = memo(function TokenNode({
   prev.peerSelectionColor === next.peerSelectionColor &&
   prev.highlightColor === next.highlightColor &&
   prev.gmShowsHiddenTokens === next.gmShowsHiddenTokens &&
+  prev.dimmed === next.dimmed &&
   prev.assetUrls === next.assetUrls &&
   tokenPreviewEqual(prev.previewPlacement, next.previewPlacement) &&
   footprintEqual(prev.previewFootprint, next.previewFootprint),
@@ -356,6 +414,7 @@ export function TokenLayer({
   scalePreviewById,
   hideMovingOffMap = false,
   gmShowsHiddenTokens = false,
+  dimmedTokenIds,
   onTokenTap,
   onTokenHover,
 }: Props) {
@@ -390,6 +449,7 @@ export function TokenLayer({
               isSelected ? undefined : peerTokenSelectionColors?.get(token.id)
             }
             gmShowsHiddenTokens={gmShowsHiddenTokens}
+            dimmed={dimmedTokenIds?.has(token.id) === true}
           />
         </Group>
         );
@@ -416,12 +476,21 @@ export const ConnectedTokenLayer = memo(function ConnectedTokenLayer(
   const activeSceneId = useStore((s) => s.activeSceneId);
   const playerName = useStore((s) => s.playerName);
   const drawHue = useStore((s) => s.drawHue);
+  const initiativeTokenPickActive = useStore((s) => s.initiativeTokenPickActive);
+  const initiativeLinkedTokenIds = useStore((s) => s.initiativeLinkedTokenIds);
   const sessionSelectionColor = useMemo(
     () => defaultPlayerColor(playerName, drawHue ?? 0),
     [playerName, drawHue],
   );
   const peerTokenSelectionColors = usePeerTokenSelectionColors(activeSceneId);
   const remoteMotion = useRemoteMotionDisplay();
+
+  const dimmedTokenIds = useMemo(() => {
+    if (!initiativeTokenPickActive || initiativeLinkedTokenIds.length === 0) {
+      return undefined;
+    }
+    return new Set(initiativeLinkedTokenIds);
+  }, [initiativeTokenPickActive, initiativeLinkedTokenIds]);
 
   const { mergedMovePreviews, mergedScalePreviews } = useMemo(() => {
     const move: Record<string, TokenGridPlacement> = { ...(movePreviewPositions ?? {}) };
@@ -460,6 +529,7 @@ export const ConnectedTokenLayer = memo(function ConnectedTokenLayer(
   return (
     <TokenLayer
       {...props}
+      dimmedTokenIds={dimmedTokenIds ?? props.dimmedTokenIds}
       movePreviewPositions={mergedMovePreviews}
       scalePreviewById={mergedScalePreviews}
       peerTokenSelectionColors={peerTokenSelectionColors}

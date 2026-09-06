@@ -3,6 +3,7 @@ import { defaultPlayerColor } from '../lib/playerColor';
 import type {
   Campaign,
   DrawStroke,
+  EphemeralDrawText,
   EphemeralMeasurement,
   SceneId,
   TokenGridPlacement,
@@ -19,6 +20,8 @@ export type LiveSyncState = {
   > | null;
   drawStrokeDragPreview: DrawStroke[] | null;
   ephemeralMeasure: EphemeralMeasurement | null;
+  ephemeralDrawText: EphemeralDrawText | null;
+  measureVisibleToPlayers: boolean;
   playerName: string;
   drawHue: number | null;
 };
@@ -28,7 +31,8 @@ export function hasLivePreviews(state: LiveSyncState): boolean {
     state.movePreviewPositions ||
       state.drawStrokeDragPreview ||
       state.scalePreviewById ||
-      state.ephemeralMeasure,
+      state.ephemeralMeasure ||
+      state.ephemeralDrawText,
   );
 }
 
@@ -37,18 +41,23 @@ export function buildLiveSyncEnvelope(
   options?: { clearEphemeral?: boolean },
 ): CampaignLiveSync | undefined {
   if (!state.activeSceneId) return undefined;
-  if (state.ephemeralMeasure) {
+  const sessionColor = defaultPlayerColor(state.playerName, state.drawHue ?? 0);
+  if (state.ephemeralMeasure || state.ephemeralDrawText) {
     return {
       sceneId: state.activeSceneId,
-      ephemeralMeasure: state.ephemeralMeasure,
-      sessionColor: defaultPlayerColor(state.playerName, state.drawHue ?? 0),
+      ephemeralMeasure: state.ephemeralMeasure ?? undefined,
+      ephemeralDrawText: state.ephemeralDrawText ?? undefined,
+      sessionColor,
+      measureVisibleToPlayers: state.measureVisibleToPlayers,
     };
   }
   if (options?.clearEphemeral) {
     return {
       sceneId: state.activeSceneId,
       ephemeralMeasure: null,
-      sessionColor: defaultPlayerColor(state.playerName, state.drawHue ?? 0),
+      ephemeralDrawText: null,
+      sessionColor,
+      measureVisibleToPlayers: state.measureVisibleToPlayers,
     };
   }
   return undefined;

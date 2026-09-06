@@ -19,6 +19,7 @@ import {
   type TokenFootprint,
   type TokenWorldBounds,
 } from '../lib/tokenScale';
+import { shouldIgnoreGlobalHotkey } from '../lib/keyboardTarget';
 import { useStore } from '../store/useStore';
 
 const HANDLE_PX = 10;
@@ -98,7 +99,13 @@ export function TokenScaleOverlay({
       const imageUrl = t.imageAssetId ? urls[t.imageAssetId] : undefined;
       urlsById[id] = imageUrl;
       aspects[id] = tokenImageAspectRatio(imageUrl);
-      marquees[id] = tokenSelectionMarqueeWorldBounds(off, t.footprint, t, imageUrl);
+      marquees[id] = tokenSelectionMarqueeWorldBounds(
+        off,
+        t.footprint,
+        t,
+        imageUrl,
+        t.outline,
+      );
     }
     startFootprintsRef.current = starts;
     startMarqueeBoundsRef.current = marquees;
@@ -137,6 +144,7 @@ export function TokenScaleOverlay({
           live.footprint,
           live,
           imageUrl,
+          live.outline,
         );
       });
     return unionWorldBounds(bounds);
@@ -243,9 +251,7 @@ export function TokenScaleOverlay({
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable) return;
+      if (shouldIgnoreGlobalHotkey(e.target)) return;
       if (useStore.getState().interactionMode !== 'scaling') return;
       e.preventDefault();
       cancelTokenScale();

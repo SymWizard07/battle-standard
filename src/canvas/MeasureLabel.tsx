@@ -5,6 +5,34 @@ import type { Point } from '../lib/types';
 
 export const MEASURE_LABEL_DISMISS_HIT_NAME = 'measure-label-dismiss';
 
+/** Screen-px bands for proximity fade: solid → semi → gone. */
+const LABEL_SOLID_PX = 56;
+const LABEL_SEMI_PX = 130;
+const LABEL_FADE_PX = 220;
+const LABEL_SEMI_OPACITY = 0.48;
+
+/**
+ * Opacity from cursor distance to the label center (screen pixels).
+ * Close = solid, mid = semi-transparent, far = invisible.
+ */
+export function measureLabelProximityOpacity(
+  distancePx: number | null,
+  opts?: { forceSolid?: boolean },
+): number {
+  if (opts?.forceSolid) return 1;
+  if (distancePx == null || !Number.isFinite(distancePx)) return 0;
+  if (distancePx <= LABEL_SOLID_PX) return 1;
+  if (distancePx <= LABEL_SEMI_PX) {
+    const t = (distancePx - LABEL_SOLID_PX) / (LABEL_SEMI_PX - LABEL_SOLID_PX);
+    return 1 - t * (1 - LABEL_SEMI_OPACITY);
+  }
+  if (distancePx <= LABEL_FADE_PX) {
+    const t = (distancePx - LABEL_SEMI_PX) / (LABEL_FADE_PX - LABEL_SEMI_PX);
+    return LABEL_SEMI_OPACITY * (1 - t);
+  }
+  return 0;
+}
+
 export function isDismissibleMeasureLabelHit(
   stage: Stage | null,
   pointer: Point,
@@ -40,6 +68,8 @@ interface Props {
   y: number;
   text: string;
   viewScale: number;
+  /** Overall visibility (proximity × fade). */
+  opacity?: number;
   /** Pinned measurements show dismiss affordance on hover. */
   dismissible?: boolean;
   hovered?: boolean;
@@ -57,6 +87,7 @@ export function MeasureLabel({
   y,
   text,
   viewScale,
+  opacity = 1,
   dismissible = false,
   hovered = false,
   onHoverChange,
@@ -65,13 +96,15 @@ export function MeasureLabel({
   const { scale, fontSize, cornerRadius, strokeWidth, width, height } =
     measureLabelDimensions(text, viewScale);
   const xArm = 4 / scale;
+  if (opacity <= 0.01) return null;
 
   return (
     <Group
       name={dismissible ? MEASURE_LABEL_DISMISS_HIT_NAME : undefined}
       x={x - width / 2}
       y={y - height / 2}
-      listening={dismissible}
+      opacity={opacity}
+      listening={dismissible && opacity > 0.2}
       onMouseEnter={() => dismissible && onHoverChange?.(true)}
       onMouseLeave={() => dismissible && onHoverChange?.(false)}
       onMouseDown={(e) => {

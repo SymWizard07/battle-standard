@@ -6,9 +6,10 @@ import {
   selectionRectFromOpaqueBounds,
   type ImageOpaqueShape,
 } from './imageOpaqueBounds';
+import { outlineToLocalPx } from './tokenImageFit';
 import type { MapCorner } from './mapGeometry';
 import { clampGridSnapStrength, snapTokenTopLeftPlacement } from './gridSnap';
-import type { Point, Token, TokenGridPlacement } from './types';
+import type { Point, Token, TokenGridPlacement, TokenOutlineStyle } from './types';
 
 export const MAX_TOKEN_FOOTPRINT_CELLS = 12;
 const MAX_CELLS = MAX_TOKEN_FOOTPRINT_CELLS;
@@ -44,7 +45,26 @@ export function tokenSelectionMarqueeLocalRect(
   displayH: number,
   imgUrl: string | undefined,
   opaqueShape: ImageOpaqueShape | null | undefined,
+  outline?: TokenOutlineStyle | null,
+  footprint?: TokenFootprint,
 ): { x: number; y: number; width: number; height: number } {
+  if (outline && footprint) {
+    const local = outlineToLocalPx(footprint, outline, 2);
+    if (local.kind === 'circle') {
+      return {
+        x: local.x - local.radius,
+        y: local.y - local.radius,
+        width: local.radius * 2,
+        height: local.radius * 2,
+      };
+    }
+    return {
+      x: local.x,
+      y: local.y,
+      width: local.width,
+      height: local.height,
+    };
+  }
   const hasImageShape = Boolean(imgUrl && opaqueShape);
   const selectionCircle = selectionCircleFromOpaqueShape(
     hasImageShape ? opaqueShape : null,
@@ -80,11 +100,19 @@ export function tokenSelectionMarqueeWorldBounds(
   footprint: TokenFootprint,
   placement: Pick<Token, 'gridPos' | 'posOffset'>,
   imageUrl?: string,
+  outline?: TokenOutlineStyle | null,
 ): TokenWorldBounds {
   const w = footprint.w * GRID_SIZE_PX;
   const h = footprint.h * GRID_SIZE_PX;
   const opaqueShape = imageUrl ? getCachedOpaqueShape(imageUrl) : undefined;
-  const local = tokenSelectionMarqueeLocalRect(w, h, imageUrl, opaqueShape);
+  const local = tokenSelectionMarqueeLocalRect(
+    w,
+    h,
+    imageUrl,
+    opaqueShape,
+    outline,
+    footprint,
+  );
   const tl = tokenWorldTopLeft(placement, gridOffset);
   return {
     minX: tl.x + local.x,

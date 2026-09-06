@@ -1,5 +1,6 @@
 import type { LayoutNode } from '../schema/layoutSchema';
 import { ModuleSlot } from './ModuleSlot';
+import { PickModePanelShell } from './PickModePanelShell';
 import { SplitPane } from './SplitPane';
 import { TabGroupPane } from './TabGroupPane';
 
@@ -56,33 +57,39 @@ export function LayoutNodeRenderer({
       dropHighlightPath.every((v, i) => v === path[i]);
 
     return (
-      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-        <TabGroupPane
-          node={node}
-          path={path}
-          mode={mode}
-          device={device}
-          onTabSelect={onTabSelect}
-          onTabMove={onTabMove}
-          editable={editable}
-          highlighted={highlighted}
-          onDropTarget={onDropTarget}
-        />
-      </div>
+      <PickModePanelShell moduleIds={node.tabs.map((t) => t.moduleId)}>
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+          <TabGroupPane
+            node={node}
+            path={path}
+            mode={mode}
+            device={device}
+            onTabSelect={onTabSelect}
+            onTabMove={onTabMove}
+            editable={editable}
+            highlighted={highlighted}
+            onDropTarget={onDropTarget}
+          />
+        </div>
+      </PickModePanelShell>
     );
   }
 
   if (node.type === 'playArea') {
     return (
-      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-        <ModuleSlot moduleId="canvas" />
-      </div>
+      <PickModePanelShell moduleIds={['canvas']}>
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+          <ModuleSlot moduleId="canvas" />
+        </div>
+      </PickModePanelShell>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-      <ModuleSlot moduleId={node.moduleId} />
-    </div>
+    <PickModePanelShell moduleIds={[node.moduleId]}>
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+        <ModuleSlot moduleId={node.moduleId} />
+      </div>
+    </PickModePanelShell>
   );
 }

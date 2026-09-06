@@ -8,11 +8,7 @@ export function createScene(name: string): Scene {
     name,
     maps: [],
     tokens: [],
-    fog: {
-      ...DEFAULT_FOG,
-      unexploredMask: [],
-      revealedMask: [],
-    },
+    fog: { ...DEFAULT_FOG },
     measurements: [],
     drawStrokes: [],
     gridOffset: { x: 0, y: 0 },

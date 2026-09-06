@@ -79,7 +79,7 @@ function sampleCampaign(id = 'camp-test-1'): Campaign {
             color: '#ff0000',
           },
         ],
-        fog: { unexploredMask: [], revealedMask: [], defaultHidden: false },
+        fog: { defaultHidden: false, ops: [] },
         measurements: [],
         drawStrokes: [],
       },

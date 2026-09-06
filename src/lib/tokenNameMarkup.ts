@@ -179,6 +179,268 @@ export function parseTokenNameMarkup(
   return out.length > 0 ? out : [{ text: raw, ...style }];
 }
 
+/** Piece of markup source including delimiter characters (for live editors). */
+export type TokenNameMarkupPiece =
+  | {
+      kind: 'text';
+      text: string;
+      style: TokenNameStyle;
+      /** Markup groups this run belongs to (pairs / color spans). */
+      groups: number[];
+    }
+  | {
+      kind: 'delim';
+      text: string;
+      groups: number[];
+    };
+
+function pushTextPiece(
+  out: TokenNameMarkupPiece[],
+  text: string,
+  style: TokenNameStyle,
+  groups: number[],
+) {
+  if (!text) return;
+  const last = out[out.length - 1];
+  if (
+    last?.kind === 'text' &&
+    last.style.color === style.color &&
+    last.style.bold === style.bold &&
+    last.style.italic === style.italic &&
+    last.style.underline === style.underline &&
+    last.style.strikethrough === style.strikethrough &&
+    last.style.obfuscated === style.obfuscated &&
+    last.groups.length === groups.length &&
+    last.groups.every((g, i) => g === groups[i])
+  ) {
+    last.text += text;
+    return;
+  }
+  out.push({ kind: 'text', text, style: { ...style }, groups: [...groups] });
+}
+
+function parseRangePieces(
+  raw: string,
+  start: number,
+  end: number,
+  style: TokenNameStyle,
+  defaultColor: string,
+  parentGroups: number[],
+  out: TokenNameMarkupPiece[],
+  nextGroup: { id: number },
+  colorGroup: { id: number },
+): void {
+  let buf = '';
+  let i = start;
+
+  const flush = () => {
+    pushTextPiece(out, buf, style, [...parentGroups, colorGroup.id]);
+    buf = '';
+  };
+
+  while (i < end) {
+    const ch = raw[i]!;
+    if (ch === '\\' && i + 1 < end) {
+      flush();
+      const g = nextGroup.id++;
+      out.push({ kind: 'delim', text: '\\', groups: [g] });
+      pushTextPiece(out, raw[i + 1]!, style, [...parentGroups, colorGroup.id, g]);
+      i += 2;
+      continue;
+    }
+
+    if (ch === '#') {
+      const hex = raw.slice(i + 1, i + 4);
+      if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+        flush();
+        colorGroup.id = nextGroup.id++;
+        out.push({ kind: 'delim', text: `#${hex}`, groups: [colorGroup.id] });
+        style = { ...style, color: expandHex3(hex) };
+        i += 4;
+        continue;
+      }
+      flush();
+      colorGroup.id = nextGroup.id++;
+      out.push({ kind: 'delim', text: '#', groups: [colorGroup.id] });
+      style = { ...style, color: defaultColor };
+      i += 1;
+      continue;
+    }
+
+    if (ch === '*') {
+      const close = findClosing(raw, i + 1, end, '*');
+      if (close >= 0) {
+        flush();
+        const g = nextGroup.id++;
+        out.push({ kind: 'delim', text: '*', groups: [g] });
+        parseRangePieces(
+          raw,
+          i + 1,
+          close,
+          { ...style, bold: true },
+          defaultColor,
+          [...parentGroups, g],
+          out,
+          nextGroup,
+          colorGroup,
+        );
+        out.push({ kind: 'delim', text: '*', groups: [g] });
+        i = close + 1;
+        continue;
+      }
+    }
+
+    if (ch === '_') {
+      const close = findClosing(raw, i + 1, end, '_');
+      if (close >= 0) {
+        flush();
+        const g = nextGroup.id++;
+        out.push({ kind: 'delim', text: '_', groups: [g] });
+        parseRangePieces(
+          raw,
+          i + 1,
+          close,
+          { ...style, italic: true },
+          defaultColor,
+          [...parentGroups, g],
+          out,
+          nextGroup,
+          colorGroup,
+        );
+        out.push({ kind: 'delim', text: '_', groups: [g] });
+        i = close + 1;
+        continue;
+      }
+    }
+
+    if (ch === '~') {
+      const close = findClosing(raw, i + 1, end, '~');
+      if (close >= 0) {
+        flush();
+        const g = nextGroup.id++;
+        out.push({ kind: 'delim', text: '~', groups: [g] });
+        parseRangePieces(
+          raw,
+          i + 1,
+          close,
+          { ...style, underline: true },
+          defaultColor,
+          [...parentGroups, g],
+          out,
+          nextGroup,
+          colorGroup,
+        );
+        out.push({ kind: 'delim', text: '~', groups: [g] });
+        i = close + 1;
+        continue;
+      }
+    }
+
+    if (ch === '-') {
+      const close = findClosing(raw, i + 1, end, '-');
+      if (close > i + 1) {
+        flush();
+        const g = nextGroup.id++;
+        out.push({ kind: 'delim', text: '-', groups: [g] });
+        parseRangePieces(
+          raw,
+          i + 1,
+          close,
+          { ...style, strikethrough: true },
+          defaultColor,
+          [...parentGroups, g],
+          out,
+          nextGroup,
+          colorGroup,
+        );
+        out.push({ kind: 'delim', text: '-', groups: [g] });
+        i = close + 1;
+        continue;
+      }
+    }
+
+    if (ch === '?') {
+      const close = findClosing(raw, i + 1, end, '?');
+      if (close >= 0) {
+        flush();
+        const g = nextGroup.id++;
+        out.push({ kind: 'delim', text: '?', groups: [g] });
+        parseRangePieces(
+          raw,
+          i + 1,
+          close,
+          { ...style, obfuscated: true },
+          defaultColor,
+          [...parentGroups, g],
+          out,
+          nextGroup,
+          colorGroup,
+        );
+        out.push({ kind: 'delim', text: '?', groups: [g] });
+        i = close + 1;
+        continue;
+      }
+    }
+
+    buf += ch;
+    i += 1;
+  }
+
+  flush();
+}
+
+/**
+ * Parse markup into text + delimiter pieces that cover the full source string
+ * (round-trip via concatenation). Delimiter `groups` link markers to the text they affect.
+ */
+export function parseTokenNameMarkupPieces(
+  raw: string,
+  defaultColor: string = DEFAULT_TOKEN_NAME_COLOR,
+): TokenNameMarkupPiece[] {
+  if (!raw) return [];
+  const style: TokenNameStyle = {
+    color: defaultColor,
+    bold: false,
+    italic: false,
+    underline: false,
+    strikethrough: false,
+    obfuscated: false,
+  };
+  const out: TokenNameMarkupPiece[] = [];
+  const nextGroup = { id: 1 };
+  const colorGroup = { id: nextGroup.id++ };
+  parseRangePieces(
+    raw,
+    0,
+    raw.length,
+    cloneStyle(style),
+    defaultColor,
+    [],
+    out,
+    nextGroup,
+    colorGroup,
+  );
+  return out;
+}
+
+/** Groups whose spans contain the caret offset within a pieces array. */
+export function markupGroupsAtOffset(
+  pieces: TokenNameMarkupPiece[],
+  offset: number,
+): Set<number> {
+  const active = new Set<number>();
+  let i = 0;
+  for (const piece of pieces) {
+    const start = i;
+    const end = i + piece.text.length;
+    if (offset >= start && offset <= end) {
+      for (const g of piece.groups) active.add(g);
+    }
+    i = end;
+  }
+  return active;
+}
+
 export function plainTokenName(raw: string): string {
   return parseTokenNameMarkup(raw).map((segment) => segment.text).join('');
 }

@@ -1,9 +1,12 @@
-import type { Campaign, EphemeralMeasurement, SceneId } from '../lib/types';
+import type { Campaign, EphemeralDrawText, EphemeralMeasurement, SceneId } from '../lib/types';
 
 export type CampaignLiveSync = {
   sceneId: SceneId;
   ephemeralMeasure?: EphemeralMeasurement | null;
+  ephemeralDrawText?: EphemeralDrawText | null;
   sessionColor?: string;
+  /** When false, other players should not see the sender's in-progress measurement. */
+  measureVisibleToPlayers?: boolean;
 };
 
 export type SyncCampaignPayload = Campaign & {

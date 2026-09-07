@@ -1,4 +1,4 @@
-import { isDiceSides, type DiceSides } from './diceTypes';
+import { isDiceSides, MAX_DICE, type DiceSides } from './diceTypes';
 
 export type ParsedDiceTerm = {
   count: number;
@@ -50,9 +50,10 @@ export function parseDiceTrayExpression(raw: string): ParsedDiceExpression | nul
     if (diceMatch) {
       const count = diceMatch[1] === '' ? 1 : Number.parseInt(diceMatch[1]!, 10);
       const sides = Number.parseInt(diceMatch[2]!, 10);
-      if (!Number.isFinite(count) || count < 1 || count > 20) return null;
+      if (!Number.isFinite(count) || count < 1 || count > MAX_DICE) return null;
       if (!POLY.has(sides) || !isDiceSides(sides)) return null;
       if (sign < 0) return null;
+      if (dice.length + count > MAX_DICE) return null;
       terms.push({ count, sides, sign });
       for (let i = 0; i < count; i++) dice.push(sides);
       pos += diceMatch[0].length;

@@ -1,7 +1,7 @@
 import { presentOrientation, readDieResult, readFaceValue, selectUpwardFace } from './faceRead';
 import { computeClusterSlot, maxGridColumns, traySizeFromAspect } from './trayLayout';
 import { getDieMeshSpec } from './diceMeshes';
-import { DICE_SIDES, dieScale } from './diceTypes';
+import { DICE_SIDES, diePoolScaleFactor, dieScale } from './diceTypes';
 import { Quaternion, Vector3 } from 'three';
 import { computePresentLayout } from './presentLayout';
 import { parseDiceTrayExpression } from './diceExpression';
@@ -15,6 +15,51 @@ function runTests() {
     const p = parseDiceTrayExpression('d20+1d4-2');
     assert(p);
     assert(p.dice.includes(20) && p.dice.includes(4));
+  }
+
+  {
+    const big = parseDiceTrayExpression('50d6');
+    assert(big && big.dice.length === 50, 'expressions may request up to MAX_DICE');
+    assert(parseDiceTrayExpression('101d6') == null, 'over MAX_DICE per term rejected');
+    assert(parseDiceTrayExpression('60d6+50d8') == null, 'over MAX_DICE total rejected');
+  }
+
+  // Opposite faces sum to n+1 (standard polyhedral convention).
+  for (const [sides, pairSum] of [
+    [6, 7],
+    [8, 9],
+    [10, 11],
+    [12, 13],
+    [20, 21],
+  ] as const) {
+    const faces = getDieMeshSpec(sides).faces;
+    const values = faces.map((f) => f.value).sort((a, b) => a - b);
+    assert(
+      values.join(',') === Array.from({ length: sides }, (_, i) => i + 1).join(','),
+      `d${sides} should use values 1..${sides}`,
+    );
+    const seen = new Set<number>();
+    for (const f of faces) {
+      if (seen.has(f.value)) continue;
+      const n = new Vector3(f.normal[0], f.normal[1], f.normal[2]);
+      let best = f;
+      let bestDot = Infinity;
+      for (const o of faces) {
+        if (o.value === f.value) continue;
+        const d = n.dot(new Vector3(o.normal[0], o.normal[1], o.normal[2]));
+        if (d < bestDot) {
+          bestDot = d;
+          best = o;
+        }
+      }
+      seen.add(f.value);
+      seen.add(best.value);
+      assert(
+        f.value + best.value === pairSum,
+        `d${sides}: ${f.value} opposite ${best.value} should sum to ${pairSum}`,
+      );
+      assert(bestDot < -0.85, `d${sides}: opposite normals should anti-align (dot=${bestDot})`);
+    }
   }
 
   {
@@ -206,7 +251,7 @@ function runTests() {
         tall.halfD,
       );
       assert(many.length === 20);
-      const span = Math.max(...many.map((s) => dieScale(s.sides))) * 1.08;
+      const span = Math.max(...many.map((s) => dieScale(s.sides, many.length))) * 1.08;
       const pad = Math.max(0.28, span * 0.22);
       for (const s of many) {
         assert(
@@ -254,6 +299,10 @@ function runTests() {
         `row counts should be even (got ${counts.join(',')})`,
       );
     }
+
+    assert(diePoolScaleFactor(20) === 1);
+    assert(diePoolScaleFactor(21) === 0.5);
+    assert(dieScale(6, 21) === dieScale(6, 1) * 0.5);
   }
 
   console.log('dice tests passed');

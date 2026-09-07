@@ -1,5 +1,5 @@
 import { useFrame, useThree } from '@react-three/fiber';
-import { Physics, RigidBody, CuboidCollider, type RapierRigidBody } from '@react-three/rapier';
+import { Physics, RigidBody, CuboidCollider, ConvexHullCollider, type RapierRigidBody } from '@react-three/rapier';
 import { RigidBodyType } from '@dimforge/rapier3d-compat';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { PerspectiveCamera, Quaternion, type Texture, Vector3 } from 'three';
@@ -13,19 +13,69 @@ import {
 } from './trayLayout';
 import { createFeltTexture, createWoodTexture } from './trayTextures';
 import {
+  DICE_SIDES,
   HOVER_Y,
   TRAY_WALL_H,
+  TRAY_WALL_T,
 } from './diceTypes';
 import {
   clientPointOnHoverPlane,
   DRAG_GAIN,
+  hoverDragMotion,
   pointerOutsideWindow,
+  resetHoverDragMotion,
+  softPlanarVelocity,
+  softSpinRate,
+  THROW_SPEED_SCALE,
 } from './hoverDrag';
 import { getDieMeshSpec } from './diceMeshes';
+import { getDieHullPoints, warmDiceGpuAssets } from './dicePreload';
 import { readDieResult } from './faceRead';
 
 /** If any die never settles, force-complete the roll after this long. */
 const ROLL_FORCE_COMPLETE_MS = 10_000;
+
+/** Upload textures / compile face shaders on the tray GL context once. */
+function DiceGpuWarmup() {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  const camera = useThree((s) => s.camera);
+  const done = useRef(false);
+
+  useLayoutEffect(() => {
+    if (done.current) return;
+    done.current = true;
+    warmDiceGpuAssets(gl, scene, camera);
+  }, [camera, gl, scene]);
+
+  return null;
+}
+
+/**
+ * Cook Rapier convex hulls off-tray so the first spawn does not hitch on collider build.
+ * Fixed bodies far below the play area; removed after one frame is unnecessary — keep cheap.
+ */
+function DiceColliderWarmup() {
+  return (
+    <>
+      {DICE_SIDES.map((sides) => {
+        const spec = getDieMeshSpec(sides);
+        if (spec.collider === 'cuboid') return null;
+        const pts = getDieHullPoints(sides, 1);
+        return (
+          <RigidBody
+            key={`warm-hull-${sides}`}
+            type="fixed"
+            colliders={false}
+            position={[0, -80, 0]}
+          >
+            <ConvexHullCollider args={[pts]} />
+          </RigidBody>
+        );
+      })}
+    </>
+  );
+}
 
 function useTrayTextures() {
   const textures = useMemo(() => {
@@ -60,7 +110,7 @@ function TrayBounds({
   felt,
   wood,
 }: TraySize & { felt: Texture; wood: Texture }) {
-  const wallT = 0.12;
+  const wallT = TRAY_WALL_T;
   const wallY = TRAY_WALL_H / 2;
 
   const maps = useMemo(() => {
@@ -212,6 +262,14 @@ export function DiceTrayScene() {
     cursor: { x: number; z: number };
     /** Accumulated cursor path length on the hover plane (ramps attraction). */
     dragPath: number;
+    /** Fastest recent cursor planar velocity (survives a pause before release). */
+    throwPeak: { vx: number; vz: number; speed: number; t: number };
+    /** Last meaningful cursor velocity — release aim for peak gating. */
+    aimVel: { vx: number; vz: number; speed: number };
+    /** Previous cursor planar velocity for heading-rate (swirl) spin. */
+    lastVel: { vx: number; vz: number } | null;
+    /** Smoothed cursor heading rate (rad/s). */
+    spinY: number;
   } | null>(null);
   const { camera, gl, invalidate } = useThree();
   const canvasEl = gl.domElement;
@@ -292,34 +350,49 @@ export function DiceTrayScene() {
       body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       body.wakeUp();
     }
+    hoverDragMotion.active = true;
     setHoverPhysics(true);
   }, []);
 
   /** All dice take the same planar velocity as the cursor delta (no distance falloff). */
   const applyHoverDragMove = useCallback(
     (delta: { x: number; z: number }, dt: number) => {
-      const state = useDicePoolStore.getState();
       const frameDt = Math.max(0.008, dt);
       const vx = delta.x / frameDt;
       const vz = delta.z / frameDt;
-      for (const d of state.dice) {
-        if (d.phase !== 'staging' && d.phase !== 'staged') continue;
-        const body = bodiesRef.current.get(d.id);
-        if (!body) continue;
-        const lv = body.linvel();
-        body.setLinvel({ x: vx, y: lv.y, z: vz }, true);
-        body.wakeUp();
-      }
+      hoverDragMotion.vx = vx;
+      hoverDragMotion.vz = vz;
+      // Follow + spin are applied every frame (spring / ball-roll). Avoid hard
+      // setLinvel here — it made dice slide parallel to the cursor until stop.
+      return { vx, vz };
     },
     [],
   );
 
   const finishHoverDrag = useCallback(() => {
-    if (!dragSession.current) return;
+    const session = dragSession.current;
+    if (!session) return;
+    // Snapshot before clearing — hover damp often zeros linvel if the cursor paused.
+    const peak = session.throwPeak;
+    const aim = session.aimVel;
+    const releaseSpinY = softSpinRate(session.spinY) * THROW_SPEED_SCALE;
+    const now = performance.now();
     dragSession.current = null;
+    resetHoverDragMotion();
+
+    // Keep peak throw for a short pause after the swing (ms).
+    const PEAK_TTL_MS = 450;
+    const PEAK_ALIGN_COS = Math.cos((35 * Math.PI) / 180);
+    const peakAlive = peak.speed > 0.5 && now - peak.t <= PEAK_TTL_MS;
+    const aimSpeed = aim.speed;
+    // Only reuse peak if it points within 35° of the last meaningful cursor aim.
+    const peakAligned =
+      peakAlive &&
+      aimSpeed > 0.5 &&
+      (peak.vx * aim.vx + peak.vz * aim.vz) / (peak.speed * aimSpeed) >= PEAK_ALIGN_COS;
 
     const state = useDicePoolStore.getState();
-    const nextFlings: Record<string, { x: number; y: number; z: number }> = {};
+    const nextFlings: Record<string, { x: number; y: number; z: number; wy?: number }> = {};
     for (const d of state.dice) {
       if (d.phase !== 'staging' && d.phase !== 'staged') continue;
       const body = bodiesRef.current.get(d.id);
@@ -328,21 +401,33 @@ export function DiceTrayScene() {
         const lv = body.linvel();
         let x = lv.x;
         let z = lv.z;
+        // Prefer aim direction when linvel has been hover-damped away.
+        if (aimSpeed > Math.hypot(x, z)) {
+          x = aim.vx;
+          z = aim.vz;
+        }
+        if (peakAligned && peak.speed > Math.hypot(x, z)) {
+          x = peak.vx;
+          z = peak.vz;
+        }
         if (Math.hypot(x, z) < 1.2) {
           x += (Math.random() - 0.5) * 3;
           z += (Math.random() - 0.5) * 3;
         }
-        // Keep a real toss into the tray, plus a clear downward impulse.
+        // No hard speed ceiling — high throws taper via soft falloff.
+        const throwXZ = softPlanarVelocity(x, z);
         nextFlings[d.id] = {
-          x,
+          x: throwXZ.vx,
           y: Math.min(lv.y, -3.0) - 0.8 - Math.random() * 0.9,
-          z,
+          z: throwXZ.vz,
+          wy: releaseSpinY,
         };
       } else {
         nextFlings[d.id] = {
           x: (Math.random() - 0.5) * 3,
           y: -3.6 - Math.random() * 1.2,
           z: (Math.random() - 0.5) * 3,
+          wy: releaseSpinY,
         };
       }
     }
@@ -360,36 +445,51 @@ export function DiceTrayScene() {
         last: { x: hit.x, z: hit.z, t: performance.now() },
         cursor: { x: hit.x, z: hit.z },
         dragPath: 0,
+        throwPeak: { vx: 0, vz: 0, speed: 0, t: 0 },
+        aimVel: { vx: 0, vz: 0, speed: 0 },
+        lastVel: null,
+        spinY: 0,
       };
+      resetHoverDragMotion();
       armHoverBodies();
     },
     [armHoverBodies, camera, canvasEl],
   );
 
-  // Attraction toward cursor; strength grows with how far the cursor has been dragged.
+  // Spring toward cursor + match cursor planar velocity (runs every frame while grabbing).
   useFrame((_, dt) => {
     const session = dragSession.current;
-    if (!session || !hoverPhysics) return;
+    if (!session || !hoverDragMotion.active) return;
     const state = useDicePoolStore.getState();
     const clampedDt = Math.min(0.05, Math.max(0.001, dt));
-    const attractK = 1.1 + Math.min(14, session.dragPath * 2.8);
+    const attractK = 2.4 + Math.min(18, session.dragPath * 3.2);
+    const velMatchK = 10;
     const { x: cx, z: cz } = session.cursor;
+
+    // If the pointer went quiet, bleed off cursor velocity so dice can settle to the cursor.
+    const idleMs = performance.now() - session.last.t;
+    if (idleMs > 40) {
+      const decay = Math.exp(-10 * clampedDt);
+      hoverDragMotion.vx *= decay;
+      hoverDragMotion.vz *= decay;
+      session.spinY *= decay;
+      hoverDragMotion.spinY = session.spinY;
+    }
+
     for (const d of state.dice) {
       if (d.phase !== 'staging' && d.phase !== 'staged') continue;
       const body = bodiesRef.current.get(d.id);
       if (!body) continue;
       const t = body.translation();
+      const lv = body.linvel();
       const dx = cx - t.x;
       const dz = cz - t.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist < 0.04) continue;
       const mass = Math.max(0.15, body.mass());
-      // Roll follows linear velocity via PhysicsDie ball-roll sync.
       body.applyImpulse(
         {
-          x: dx * attractK * mass * clampedDt,
+          x: (dx * attractK + (hoverDragMotion.vx - lv.x) * velMatchK) * mass * clampedDt,
           y: 0,
-          z: dz * attractK * mass * clampedDt,
+          z: (dz * attractK + (hoverDragMotion.vz - lv.z) * velMatchK) * mass * clampedDt,
         },
         true,
       );
@@ -423,7 +523,35 @@ export function DiceTrayScene() {
       session.dragPath += Math.hypot(stepX, stepZ);
       const dx = stepX * DRAG_GAIN;
       const dz = stepZ * DRAG_GAIN;
-      applyHoverDragMove({ x: dx, z: dz }, frameDt);
+      const { vx, vz } = applyHoverDragMove({ x: dx, z: dz }, frameDt);
+      const speed = Math.hypot(vx, vz);
+      // Ignore near-zero jitter so a pause doesn't wipe the swing peak.
+      if (speed > 1.25 && speed >= session.throwPeak.speed) {
+        session.throwPeak = { vx, vz, speed, t: now };
+      } else if (speed > 2.5 && speed > session.throwPeak.speed * 0.65) {
+        // Still moving meaningfully — keep the peak "fresh".
+        session.throwPeak.t = now;
+      }
+      // Last solid cursor heading — peak may only reuse if within 35° of this.
+      if (speed > 1.25) {
+        session.aimVel = { vx, vz, speed };
+      }
+
+      // Circling: heading change of the cursor velocity → Y spin on the dice.
+      if (session.lastVel && speed > 1.0) {
+        const a0 = Math.atan2(session.lastVel.vz, session.lastVel.vx);
+        const a1 = Math.atan2(vz, vx);
+        let da = a1 - a0;
+        if (da > Math.PI) da -= Math.PI * 2;
+        if (da < -Math.PI) da += Math.PI * 2;
+        const wy = da / frameDt;
+        session.spinY = softSpinRate(session.spinY * 0.72 + wy * 0.28);
+      } else if (speed < 0.6) {
+        session.spinY *= 0.88;
+      }
+      hoverDragMotion.spinY = session.spinY;
+      session.lastVel = { vx, vz };
+
       session.last = { x: hit.x, z: hit.z, t: now };
     };
 
@@ -521,6 +649,8 @@ export function DiceTrayScene() {
 
   return (
     <Physics gravity={[0, -18, 0]} timeStep="vary">
+      <DiceGpuWarmup />
+      <DiceColliderWarmup />
       <TrayCameraFramer halfW={tray.halfW} halfD={tray.halfD} />
       <TrayBounds
         key={`${tray.halfW.toFixed(3)}x${tray.halfD.toFixed(3)}`}
@@ -561,6 +691,7 @@ export function DiceTrayScene() {
             flingVelocity={
               fling ? new Vector3(fling.x, fling.y, fling.z) : null
             }
+            flingSpinY={fling?.wy ?? 0}
             onSettled={onSettled}
             onHoverDragPointerDown={onHoverDragPointerDown}
             registerBody={registerBody}

@@ -29,19 +29,6 @@ function nextPow2(n: number): number {
   return p;
 }
 
-function parseHexColor(hex: string): { r: number; g: number; b: number } {
-  const h = hex.replace('#', '');
-  const full =
-    h.length === 3
-      ? h
-          .split('')
-          .map((c) => c + c)
-          .join('')
-      : h;
-  const n = Number.parseInt(full, 16);
-  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
-}
-
 function atlasLayout(faceCount: number, cellHint = 128): { cols: number; size: number; cell: number } {
   const { cols } = dieAtlasGrid(faceCount);
   const size = nextPow2(cols * cellHint);
@@ -135,11 +122,10 @@ function paintFaceCell(
   x0: number,
   y0: number,
   cell: number,
-  bodyColor: string,
   sides: DiceSides,
 ) {
-  const { r, g, b } = parseHexColor(bodyColor);
-  albedo.fillStyle = `rgb(${r},${g},${b})`;
+  // White field so face color comes from the die shader / material tint.
+  albedo.fillStyle = '#ffffff';
   albedo.fillRect(x0, y0, cell, cell);
   height.fillStyle = '#808080';
   height.fillRect(x0, y0, cell, cell);
@@ -193,22 +179,23 @@ function paintFaceCell(
     drawCenteredNumber(height, digits, x, y, fontPx, '#101010', 0);
   }
 
-  albedo.strokeStyle = `rgba(${Math.max(0, r - 40)},${Math.max(0, g - 40)},${Math.max(0, b - 40)},0.3)`;
+  albedo.strokeStyle = 'rgba(15, 23, 42, 0.12)';
   albedo.lineWidth = Math.max(1, cell * 0.012);
   const inset = cell * 0.06;
   albedo.strokeRect(x0 + inset, y0 + inset, cell - inset * 2, cell - inset * 2);
 }
 
 /**
- * Albedo + normal-map atlas for a die. Glyphs are painted per face cell;
- * normals come from a height field so numbers read as recessed engraving.
+ * Albedo + normal-map atlas for a die. Glyphs are painted on a white field;
+ * face body color is applied by the material / face shader (`uFaceColor`).
+ * Normals come from a height field so numbers read as recessed engraving.
  */
 export function getDieFaceTextures(
   sides: DiceSides,
-  bodyColor: string,
+  _bodyColor: string,
   faces: FaceDef[],
 ): DieFaceTextures {
-  const key = `v3:${sides}:${bodyColor}:${faces
+  const key = `v4-white:${sides}:${faces
     .map((f) => `${f.value}:${f.align?.join(',') ?? ''}`)
     .join('|')}`;
   const hit = textureCache.get(key);
@@ -224,7 +211,7 @@ export function getDieFaceTextures(
   const aCtx = albedoCanvas.getContext('2d')!;
   const hCtx = heightCanvas.getContext('2d')!;
 
-  aCtx.fillStyle = bodyColor;
+  aCtx.fillStyle = '#ffffff';
   aCtx.fillRect(0, 0, size, size);
   hCtx.fillStyle = '#808080';
   hCtx.fillRect(0, 0, size, size);
@@ -232,7 +219,7 @@ export function getDieFaceTextures(
   for (let i = 0; i < faces.length; i++) {
     const col = i % cols;
     const row = Math.floor(i / cols);
-    paintFaceCell(aCtx, hCtx, faces[i]!, col * cell, row * cell, cell, bodyColor, sides);
+    paintFaceCell(aCtx, hCtx, faces[i]!, col * cell, row * cell, cell, sides);
   }
 
   const heightData = hCtx.getImageData(0, 0, size, size);

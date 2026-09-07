@@ -1,5 +1,6 @@
 import { Canvas } from '@react-three/fiber';
 import { useEffect, useState } from 'react';
+import { warmDiceCpuAssets } from './dicePreload';
 import { DiceTrayScene } from './DiceTrayScene';
 
 type Props = {
@@ -18,6 +19,8 @@ export function DiceTrayCanvas({ active }: Props) {
   useEffect(() => {
     // Defer Rapier canvas until tab is shown at least once.
     if (active) {
+      // CPU mesh/atlas/hull warm before the first die is added.
+      warmDiceCpuAssets();
       setReady(true);
       preloadDieLabelFont();
     }

@@ -177,8 +177,52 @@ function d6Faces(he: number): FaceDef[] {
   ];
 }
 
-function assignSequential(faces: FaceDef[]): FaceDef[] {
-  return faces.map((f, i) => ({ ...f, value: i + 1 }));
+/**
+ * Number faces so opposite normals form pairs that sum to `pairSum`
+ * (d8→9, d10→11, d12→13, d20→21). Standard polyhedral fairness convention.
+ */
+function assignOppositeSum(faces: FaceDef[], pairSum: number): FaceDef[] {
+  const remaining = faces.map((f, i) => ({ f, i }));
+  const pairs: Array<[FaceDef, FaceDef]> = [];
+
+  while (remaining.length >= 2) {
+    const a = remaining[0]!.f;
+    const na = new Vector3(a.normal[0], a.normal[1], a.normal[2]);
+    let bestJ = 1;
+    let bestDot = Infinity;
+    for (let j = 1; j < remaining.length; j++) {
+      const o = remaining[j]!.f;
+      const d = na.dot(new Vector3(o.normal[0], o.normal[1], o.normal[2]));
+      if (d < bestDot) {
+        bestDot = d;
+        bestJ = j;
+      }
+    }
+    const b = remaining[bestJ]!.f;
+    remaining.splice(bestJ, 1);
+    remaining.shift();
+    // Stable: face with higher +Y gets the lower number in the pair.
+    if (a.normal[1] > b.normal[1] + 1e-9) pairs.push([a, b]);
+    else if (b.normal[1] > a.normal[1] + 1e-9) pairs.push([b, a]);
+    else if (a.normal[0] <= b.normal[0]) pairs.push([a, b]);
+    else pairs.push([b, a]);
+  }
+
+  pairs.sort((p, q) => {
+    const dy = q[0].normal[1] - p[0].normal[1];
+    if (Math.abs(dy) > 1e-9) return dy;
+    const dx = p[0].normal[0] - q[0].normal[0];
+    if (Math.abs(dx) > 1e-9) return dx;
+    return p[0].normal[2] - q[0].normal[2];
+  });
+
+  let lo = 1;
+  for (const [lowFace, highFace] of pairs) {
+    lowFace.value = lo;
+    highFace.value = pairSum - lo;
+    lo += 1;
+  }
+  return faces;
 }
 
 /** Unique verts of a mesh, stably ordered for numbering. */
@@ -319,10 +363,11 @@ function buildD10Geometry(): {
   outline: BufferGeometry;
 } {
   // Pentagonal trapezohedron: 10 kite faces (no separate polar-cap tris).
+  // ringY = tan²(π/10) keeps each kite planar for poles at ±1 and ring radius 1.
   const N = new Vector3(0, 1, 0);
   const S = new Vector3(0, -1, 0);
   const R = 1;
-  const ringY = 0.2;
+  const ringY = Math.tan(Math.PI / 10) ** 2;
   const U: Vector3[] = [];
   const V: Vector3[] = [];
   for (let i = 0; i < 5; i++) {
@@ -363,23 +408,13 @@ function buildD10Geometry(): {
       .add(c)
       .add(d)
       .multiplyScalar(0.25);
-    // Newell normal over the quad (handles non-planar kites without splitting verts).
-    const n = new Vector3();
-    const quad = [a, b, c, d];
-    for (let k = 0; k < 4; k++) {
-      const p = quad[k]!;
-      const q = quad[(k + 1) % 4]!;
-      n.x += (p.y - q.y) * (p.z + q.z);
-      n.y += (p.z - q.z) * (p.x + q.x);
-      n.z += (p.x - q.x) * (p.y + q.y);
-    }
-    if (n.lengthSq() < 1e-12) {
-      n.crossVectors(
+    // Planar kite: both tris share this normal.
+    const n = new Vector3()
+      .crossVectors(
         new Vector3().subVectors(b, a),
         new Vector3().subVectors(d, a),
-      );
-    }
-    n.normalize();
+      )
+      .normalize();
     if (n.dot(mid) < 0) n.negate();
 
     const wind = (p: Vector3, q: Vector3, r: Vector3) => {
@@ -639,7 +674,10 @@ export function getDieMeshSpec(sides: DiceSides): DieMeshSpec {
     case 8: {
       const geometry = new OctahedronGeometry(1, 0);
       fitUnitMaxExtent(geometry);
-      const faces = assignSequential(facesFromUniqueNormals(geometry, (i) => i + 1));
+      const faces = assignOppositeSum(
+        facesFromUniqueNormals(geometry, (i) => i + 1),
+        9,
+      );
       spec = {
         geometry,
         faces,
@@ -652,6 +690,7 @@ export function getDieMeshSpec(sides: DiceSides): DieMeshSpec {
       const { geometry, faces, outline } = buildD10Geometry();
       const { offset, scale } = fitUnitMaxExtent(geometry, outline);
       remapFaceCenters(faces, offset, scale);
+      assignOppositeSum(faces, 11);
       spec = {
         geometry,
         faces,
@@ -664,10 +703,13 @@ export function getDieMeshSpec(sides: DiceSides): DieMeshSpec {
     case 12: {
       const geometry = new DodecahedronGeometry(1, 0);
       fitUnitMaxExtent(geometry);
-      const faces = assignSequential(facesFromUniqueNormals(geometry, (i) => i + 1));
+      const faces = assignOppositeSum(
+        facesFromUniqueNormals(geometry, (i) => i + 1).slice(0, 12),
+        13,
+      );
       spec = {
         geometry,
-        faces: faces.slice(0, 12),
+        faces,
         radius: geometry.boundingSphere?.radius ?? 0.55,
         collider: 'hull',
       };
@@ -676,10 +718,13 @@ export function getDieMeshSpec(sides: DiceSides): DieMeshSpec {
     case 20: {
       const geometry = new IcosahedronGeometry(1, 0);
       fitUnitMaxExtent(geometry);
-      const faces = assignSequential(facesFromUniqueNormals(geometry, (i) => i + 1));
+      const faces = assignOppositeSum(
+        facesFromUniqueNormals(geometry, (i) => i + 1).slice(0, 20),
+        21,
+      );
       spec = {
         geometry,
-        faces: faces.slice(0, 20),
+        faces,
         radius: geometry.boundingSphere?.radius ?? 0.55,
         collider: 'hull',
       };
@@ -703,16 +748,16 @@ export function getDieMeshSpec(sides: DiceSides): DieMeshSpec {
 export function dieAccentColor(sides: DiceSides): string {
   switch (sides) {
     case 4:
-      return '#f59e0b';
+      return '#ea580c'; // vivid orange
     case 6:
-      return '#e2e8f0';
+      return '#4f46e5'; // vivid indigo
     case 8:
-      return '#38bdf8';
+      return '#0891b2'; // vivid cyan
     case 10:
-      return '#a3e635';
+      return '#16a34a'; // vivid green
     case 12:
-      return '#f472b6';
+      return '#9333ea'; // vivid purple
     case 20:
-      return '#fb7185';
+      return '#dc2626'; // vivid red
   }
 }

@@ -1,5 +1,10 @@
 import type { DiceSides } from './diceTypes';
-import { dieScale, TRAY_HALF_D, TRAY_HALF_W } from './diceTypes';
+import {
+  diePoolScaleFactor,
+  dieScale,
+  TRAY_HALF_D,
+  TRAY_HALF_W,
+} from './diceTypes';
 import { DIE_GRID_GAP } from './trayLayout';
 
 export type PresentSlot = {
@@ -26,9 +31,12 @@ export function maxDiceAlongAxis(
 }
 
 /** Footprint diameter used for present packing (largest die in the set). */
-export function presentDieSpan(sidesList: readonly DiceSides[]): number {
-  let max = dieScale(6);
-  for (const s of sidesList) max = Math.max(max, dieScale(s));
+export function presentDieSpan(
+  sidesList: readonly DiceSides[],
+  poolCount = sidesList.length,
+): number {
+  let max = dieScale(6, poolCount);
+  for (const s of sidesList) max = Math.max(max, dieScale(s, poolCount));
   // Unit AABB meshes ≈ 1 across; small cushion so glyphs/edges don't kiss.
   return max * 1.08;
 }
@@ -49,11 +57,15 @@ export function computePresentLayout(
   const n = sorted.length;
   if (n === 0) return [];
 
-  const dieSpan = presentDieSpan(sorted.map((d) => d.sides));
+  const dieSpan = presentDieSpan(
+    sorted.map((d) => d.sides),
+    n,
+  );
   // Present sits at HOVER_Y — elevated dice project wider, so inset more than the rim.
   const edgePad = Math.max(0.28, dieSpan * 0.22);
 
-  let gap = Math.max(DIE_GRID_GAP, dieSpan * 1.12);
+  const packScale = diePoolScaleFactor(n);
+  let gap = Math.max(DIE_GRID_GAP * packScale, dieSpan * 1.12);
   let maxCols = maxDiceAlongAxis(halfW, dieSpan, gap, edgePad);
   let maxRows = maxDiceAlongAxis(halfD, dieSpan, gap, edgePad);
 

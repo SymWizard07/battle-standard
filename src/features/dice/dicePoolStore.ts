@@ -9,7 +9,13 @@ import {
   type RollPhase,
 } from './diceTypes';
 
-export type FlingVec = { x: number; y: number; z: number };
+export type FlingVec = {
+  x: number;
+  y: number;
+  z: number;
+  /** Optional yaw rate from cursor swirl at release (rad/s). */
+  wy?: number;
+};
 
 type DicePoolState = {
   dice: DieInstance[];

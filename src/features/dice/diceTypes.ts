@@ -18,11 +18,15 @@ export type DieInstance = {
 
 export type RollPhase = 'idle' | 'rolling' | 'presenting' | 'done';
 
-export const MAX_DICE = 20;
+export const MAX_DICE = 100;
+/** Above this pool size, dice (and pack spacing) shrink to half. */
+export const FULL_SIZE_DICE_CAP = 20;
 export const HOVER_Y = 2.4;
 export const TRAY_HALF_W = 3.2;
 export const TRAY_HALF_D = 2.2;
 export const TRAY_WALL_H = 1.1;
+/** Half-thickness of the wood rim (matches TrayBounds colliders / meshes). */
+export const TRAY_WALL_T = 0.12;
 export const DIE_SCALE = 0.38 * 1.5;
 
 /**
@@ -40,9 +44,14 @@ const SET_SIZE_REL: Record<DiceSides, number> = {
   20: 1.24,
 };
 
+/** Half-size multiplier when more than {@link FULL_SIZE_DICE_CAP} dice are in play. */
+export function diePoolScaleFactor(poolCount: number): number {
+  return poolCount > FULL_SIZE_DICE_CAP ? 0.5 : 1;
+}
+
 /** World scale so every mesh matches standard set proportions. */
-export function dieScale(sides: DiceSides): number {
-  return DIE_SCALE * SET_SIZE_REL[sides];
+export function dieScale(sides: DiceSides, poolCount = 1): number {
+  return DIE_SCALE * SET_SIZE_REL[sides] * diePoolScaleFactor(poolCount);
 }
 
 export function isDiceSides(n: number): n is DiceSides {

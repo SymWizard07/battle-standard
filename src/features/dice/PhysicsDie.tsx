@@ -7,12 +7,30 @@ import {
 } from '@react-three/rapier';
 import { RigidBodyType } from '@dimforge/rapier3d-compat';
 import { useEffect, useMemo, useRef } from 'react';
-import { Quaternion, Vector3, type BufferGeometry } from 'three';
+import { Quaternion, Vector3 } from 'three';
 import { getDieMeshSpec } from './diceMeshes';
+import { getDieHullPoints } from './dicePreload';
 import { DieVisual } from './DieVisual';
 import { presentOrientation, readDieResult } from './faceRead';
-import { computeClusterSlot } from './trayLayout';
-import { dieScale, HOVER_Y, type DiceSides, type DiePhase } from './diceTypes';
+import { hoverDragMotion, softMagnitude } from './hoverDrag';
+import { computeClusterSlot, DIE_CLUSTER_GAP } from './trayLayout';
+import {
+  diePoolScaleFactor,
+  dieScale,
+  HOVER_Y,
+  TRAY_WALL_H,
+  TRAY_WALL_T,
+  type DiceSides,
+  type DiePhase,
+} from './diceTypes';
+
+/**
+ * Past this XZ offset from tray center the die is behind the rim (can't be seen).
+ * Exit and opposite-side re-entry both use this pocket.
+ */
+function trayHiddenPast(half: number): number {
+  return half + TRAY_WALL_T * 0.55;
+}
 
 const MIN_FALL_SEC = 0.85;
 /** Linear speed below which a die may be considered at rest. */
@@ -43,29 +61,10 @@ const HOVER_PLANAR_DAMP_FORCE = 0.35;
 /** How quickly spin matches planar velocity (ball-roll ω = v × n̂ / r). */
 const HOVER_ROLL_SYNC = 16;
 
-function rollRadius(sides: DiceSides): number {
+function rollRadius(sides: DiceSides, poolCount: number): number {
   // Circumradius of the mesh × scale — spin about the geometric center.
   const spec = getDieMeshSpec(sides);
-  return Math.max(0.12, spec.radius * dieScale(sides));
-}
-
-/** Unique scaled vertices for a convex hull matching the rendered die. */
-function hullPointsFromGeometry(geometry: BufferGeometry, scale: number): Float32Array {
-  // Tiny inflate so the visual face sits on the felt instead of sinking through it.
-  const s = scale * 1.02;
-  const pos = geometry.getAttribute('position');
-  const pts: number[] = [];
-  const seen = new Set<string>();
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i) * s;
-    const y = pos.getY(i) * s;
-    const z = pos.getZ(i) * s;
-    const key = `${x.toFixed(4)},${y.toFixed(4)},${z.toFixed(4)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    pts.push(x, y, z);
-  }
-  return new Float32Array(pts);
+  return Math.max(0.12, spec.radius * dieScale(sides, poolCount));
 }
 
 type Props = {
@@ -88,6 +87,8 @@ type Props = {
   onHoverDragPointerDown: (id: string, pointerId: number, clientX: number, clientY: number) => void;
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   flingVelocity: Vector3 | null;
+  /** Yaw rate at cursor release (rad/s); combined with ball-roll from flingVelocity. */
+  flingSpinY?: number;
 };
 
 export function PhysicsDie({
@@ -107,13 +108,14 @@ export function PhysicsDie({
   onHoverDragPointerDown,
   registerBody,
   flingVelocity,
+  flingSpinY = 0,
 }: Props) {
   const bodyRef = useRef<RapierRigidBody>(null);
   const camera = useThree((s) => s.camera);
   const spec = useMemo(() => getDieMeshSpec(sides), [sides]);
   const hullPoints = useMemo(
-    () => hullPointsFromGeometry(spec.geometry, dieScale(sides)),
-    [spec.geometry, sides],
+    () => getDieHullPoints(sides, spawnCount),
+    [sides, spawnCount],
   );
   const quietFrames = useRef(0);
   const reported = useRef(false);
@@ -127,7 +129,14 @@ export function PhysicsDie({
   const prevPhase = useRef(phase);
 
   const stagingPos = useMemo(() => {
-    const slot = computeClusterSlot(spawnIndex, spawnCount, trayHalfW, trayHalfD);
+    const gap = DIE_CLUSTER_GAP * diePoolScaleFactor(spawnCount);
+    const slot = computeClusterSlot(
+      spawnIndex,
+      spawnCount,
+      trayHalfW,
+      trayHalfD,
+      gap,
+    );
     return new Vector3(slot.x, HOVER_Y, slot.z);
   }, [spawnIndex, spawnCount, trayHalfW, trayHalfD]);
 
@@ -149,7 +158,7 @@ export function PhysicsDie({
   useEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
-    if (phase === 'staging' && !hoverPhysics) {
+    if (phase === 'staging' && !hoverPhysics && !hoverDragMotion.active) {
       reported.current = false;
       quietFrames.current = 0;
       presentT.current = 0;
@@ -168,7 +177,7 @@ export function PhysicsDie({
   useEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
-    if (!hoverPhysics) return;
+    if (!hoverPhysics && !hoverDragMotion.active) return;
     if (phase !== 'staging' && phase !== 'staged') return;
     body.setBodyType(RigidBodyType.Dynamic, true);
     body.setGravityScale(0, true);
@@ -213,17 +222,35 @@ export function PhysicsDie({
     }
 
     body.setLinvel({ x: v.x, y: v.y, z: v.z }, true);
-    const spin = flingVelocity ? 16 : 42;
-    body.setAngvel(
-      {
-        x: (Math.random() - 0.5) * spin,
-        y: (Math.random() - 0.5) * spin,
-        z: (Math.random() - 0.5) * spin,
-      },
-      true,
-    );
+    if (flingVelocity) {
+      // Ball-roll in the release direction (ŷ × v / r), plus any cursor swirl.
+      const r = rollRadius(sides, spawnCount);
+      const wx = v.z / r;
+      const wz = -v.x / r;
+      const speed = Math.hypot(v.x, v.z);
+      // Faster throws add more tumble, with soft falloff (no hard boost ceiling).
+      const boost = 1.0 + softMagnitude(speed * 0.06, 1.2, 1.6);
+      body.setAngvel(
+        {
+          x: wx * boost,
+          y: flingSpinY,
+          z: wz * boost,
+        },
+        true,
+      );
+    } else {
+      const spin = 42;
+      body.setAngvel(
+        {
+          x: (Math.random() - 0.5) * spin,
+          y: (Math.random() - 0.5) * spin,
+          z: (Math.random() - 0.5) * spin,
+        },
+        true,
+      );
+    }
     body.wakeUp();
-  }, [phase, rollId, flingVelocity]);
+  }, [flingSpinY, flingVelocity, phase, rollId, sides, spawnCount]);
 
   useEffect(() => {
     const body = bodyRef.current;
@@ -243,7 +270,7 @@ export function PhysicsDie({
     const body = bodyRef.current;
     if (!body) return;
 
-    if (hoverPhysics && (phase === 'staging' || phase === 'staged')) {
+    if ((hoverPhysics || hoverDragMotion.active) && (phase === 'staging' || phase === 'staged')) {
       const t = body.translation();
       const lv = body.linvel();
       const av = body.angvel();
@@ -253,31 +280,39 @@ export function PhysicsDie({
       const stab =
         -(HOVER_STAB_K + HOVER_STAB_K_FAR * Math.abs(dy)) * dy -
         HOVER_STAB_DAMP * lv.y;
+      // Don't planar-damp while the cursor is driving — that killed follow/spin mid-drag.
+      const cSpeed = Math.hypot(hoverDragMotion.vx, hoverDragMotion.vz);
+      const planarDamp = cSpeed > 0.35 ? 0 : HOVER_PLANAR_DAMP_FORCE;
       body.applyImpulse(
         {
-          x: -lv.x * HOVER_PLANAR_DAMP_FORCE * mass * dt,
+          x: -lv.x * planarDamp * mass * dt,
           y: stab * mass * dt,
-          z: -lv.z * HOVER_PLANAR_DAMP_FORCE * mass * dt,
+          z: -lv.z * planarDamp * mass * dt,
         },
         true,
       );
 
-      // Smooth ball-roll opposite the drag: spin against planar velocity.
-      const r = rollRadius(sides);
-      const targetWx = lv.z / r;
-      const targetWz = -lv.x / r;
+      // Ball-roll from cursor velocity while dragging (body lv lags / is springy).
+      const r = rollRadius(sides, spawnCount);
+      const cvx = hoverDragMotion.vx;
+      const cvz = hoverDragMotion.vz;
+      const rollVx = cSpeed > 0.35 ? cvx : lv.x;
+      const rollVz = cSpeed > 0.35 ? cvz : lv.z;
+      const targetWx = rollVz / r;
+      const targetWz = -rollVx / r;
+      const targetWy = hoverDragMotion.spinY;
       const k = 1 - Math.exp(-HOVER_ROLL_SYNC * dt);
       body.setAngvel(
         {
           x: av.x + (targetWx - av.x) * k,
-          y: av.y * (1 - k),
+          y: av.y + (targetWy - av.y) * k,
           z: av.z + (targetWz - av.z) * k,
         },
         true,
       );
 
       // Soft wall keep-in (XZ only — Y is force-stabilized, no ceiling/floor).
-      const margin = dieScale(sides) * 0.7;
+      const margin = dieScale(sides, spawnCount) * 0.7;
       const maxX = trayHalfW - margin;
       const maxZ = trayHalfD - margin;
       const nx = Math.max(-maxX, Math.min(maxX, t.x));
@@ -327,6 +362,37 @@ export function PhysicsDie({
         quietFrames.current = 0;
         sawMotion.current = true;
         return;
+      }
+
+      // Fling off a rim → reappear in the opposite rim's hidden pocket (can't be seen).
+      {
+        const pastX = trayHiddenPast(trayHalfW);
+        const pastZ = trayHiddenPast(trayHalfD);
+        let x = t.x;
+        let y = t.y;
+        let z = t.z;
+        let wrapped = false;
+        // Strict outer pockets only — equality after teleport must not re-trigger.
+        if (x > pastX) {
+          x = -pastX;
+          wrapped = true;
+        } else if (x < -pastX) {
+          x = pastX;
+          wrapped = true;
+        }
+        if (z > pastZ) {
+          z = -pastZ;
+          wrapped = true;
+        } else if (z < -pastZ) {
+          z = pastZ;
+          wrapped = true;
+        }
+        if (wrapped) {
+          // Stay above the opposite rim so we fly in instead of tunneling the collider.
+          y = Math.max(y, TRAY_WALL_H + 0.08);
+          body.setTranslation({ x, y, z }, true);
+          body.wakeUp();
+        }
       }
 
       const lv = body.linvel();
@@ -410,7 +476,7 @@ export function PhysicsDie({
     }
   });
 
-  const scale = dieScale(sides);
+  const scale = dieScale(sides, spawnCount);
   const half = (spec.cuboidHalf ?? [0.5, 0.5, 0.5]).map((v) => v * scale) as [
     number,
     number,

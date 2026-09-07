@@ -21,6 +21,7 @@ import { DEFAULT_GRID_OFFSET } from '../lib/fixedGrid';
 import { snapWorldPointWithStrength } from '../lib/gridSnap';
 import { defaultPlayerColor } from '../lib/playerColor';
 import { canSessionMoveDrawStrokes } from '../sync/syncProvider';
+import { clearRemoteStrokeMotion } from '../sync/remoteMotion';
 import { useStore } from '../store/useStore';
 import { RotationHandleControl } from './RotationHandleControl';
 
@@ -174,6 +175,7 @@ export function DrawStrokeEditOverlay({
     const preview = useStore.getState().drawStrokeDragPreview;
     if (preview && (wasMove || wasResize || wasRotate)) {
       onUpdateAllRef.current(preview);
+      clearRemoteStrokeMotion(preview.map((s) => s.id));
     }
     setDrawStrokeDragPreview(null);
 

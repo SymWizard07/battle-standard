@@ -1,6 +1,4 @@
-import { mergeDrawStrokeDragPreview } from '../lib/drawShapes';
 import { defaultPlayerColor } from '../lib/playerColor';
-import type { TokenScalePreview } from '../lib/tokenScale';
 import type {
   Campaign,
   DrawStroke,
@@ -9,6 +7,7 @@ import type {
   SceneId,
   TokenGridPlacement,
 } from '../lib/types';
+import type { TokenScalePreview } from '../lib/tokenScale';
 import type { CampaignLiveSync } from './liveSyncPayload';
 
 export type LiveSyncState = {
@@ -40,88 +39,52 @@ export function buildLiveSyncEnvelope(
 ): CampaignLiveSync | undefined {
   if (!state.activeSceneId) return undefined;
   const sessionColor = defaultPlayerColor(state.playerName, state.drawHue ?? 0);
-  if (state.ephemeralMeasure || state.ephemeralDrawText) {
-    return {
-      sceneId: state.activeSceneId,
-      ephemeralMeasure: state.ephemeralMeasure ?? undefined,
-      ephemeralDrawText: state.ephemeralDrawText ?? undefined,
-      sessionColor,
-      measureVisibleToPlayers: state.measureVisibleToPlayers,
-    };
-  }
-  if (options?.clearEphemeral) {
-    return {
-      sceneId: state.activeSceneId,
-      ephemeralMeasure: null,
-      ephemeralDrawText: null,
-      sessionColor,
-      measureVisibleToPlayers: state.measureVisibleToPlayers,
-    };
-  }
-  return undefined;
-}
-
-/** Campaign JSON payload with in-progress drag previews applied for multiplayer sync. */
-export function buildCampaignSyncSnapshot(state: LiveSyncState): Campaign | null {
-  const { campaign, activeSceneId } = state;
-  if (!campaign || !activeSceneId) return campaign;
-  const scene = campaign.scenes[activeSceneId];
-  if (!scene) return campaign;
-
-  let nextScene = scene;
-  let changed = false;
-
-  if (state.movePreviewPositions) {
-    nextScene = {
-      ...nextScene,
-      tokens: nextScene.tokens.map((token) => {
-        const placement = state.movePreviewPositions![token.id];
-        if (!placement) return token;
-        changed = true;
-        return {
-          ...token,
-          gridPos: placement.gridPos,
-          posOffset: placement.posOffset,
-        };
-      }),
-    };
-  }
-
-  if (state.scalePreviewById) {
-    nextScene = {
-      ...nextScene,
-      tokens: nextScene.tokens.map((token) => {
-        const preview = state.scalePreviewById![token.id];
-        if (!preview) return token;
-        changed = true;
-        return {
-          ...token,
-          footprint: preview.footprint,
-          gridPos: preview.placement.gridPos,
-          posOffset: preview.placement.posOffset,
-          ...(preview.imageTransform
-            ? { imageTransform: preview.imageTransform }
-            : {}),
-          ...(preview.outline ? { outline: preview.outline } : {}),
-        };
-      }),
-    };
-  }
-
-  if (state.drawStrokeDragPreview?.length) {
-    const drawStrokes = mergeDrawStrokeDragPreview(
-      nextScene.drawStrokes ?? [],
+  const clear = Boolean(options?.clearEphemeral);
+  const hasEphemeral = Boolean(state.ephemeralMeasure || state.ephemeralDrawText);
+  const hasTokenLive = Boolean(
+    state.movePreviewPositions ||
+      state.scalePreviewById ||
       state.drawStrokeDragPreview,
-    );
-    changed = true;
-    nextScene = { ...nextScene, drawStrokes };
-  }
-
-  if (!changed) return campaign;
+  );
+  if (!hasEphemeral && !hasTokenLive && !clear) return undefined;
 
   return {
-    ...campaign,
-    scenes: { ...campaign.scenes, [activeSceneId]: nextScene },
-    updatedAt: Date.now(),
+    sceneId: state.activeSceneId,
+    issuedAt: Date.now(),
+    ephemeralMeasure: state.ephemeralMeasure
+      ? state.ephemeralMeasure
+      : clear
+        ? null
+        : undefined,
+    ephemeralDrawText: state.ephemeralDrawText
+      ? state.ephemeralDrawText
+      : clear
+        ? null
+        : undefined,
+    movePreviewPositions: state.movePreviewPositions
+      ? state.movePreviewPositions
+      : clear
+        ? null
+        : undefined,
+    scalePreviewById: state.scalePreviewById
+      ? state.scalePreviewById
+      : clear
+        ? null
+        : undefined,
+    drawStrokeDragPreview: state.drawStrokeDragPreview
+      ? state.drawStrokeDragPreview
+      : clear
+        ? null
+        : undefined,
+    sessionColor,
+    measureVisibleToPlayers: state.measureVisibleToPlayers,
   };
+}
+
+/**
+ * Campaign JSON for sync. Live drag previews are sent via liveSync envelope —
+ * do not bake them into committed campaign token positions.
+ */
+export function buildCampaignSyncSnapshot(state: LiveSyncState): Campaign | null {
+  return state.campaign;
 }

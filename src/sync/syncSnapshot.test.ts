@@ -44,9 +44,9 @@ function runTests(): void {
     }),
   );
 
-  const snapshot = buildCampaignSyncSnapshot({
+  const withPreview = {
     campaign,
-    activeSceneId: 'scene-1',
+    activeSceneId: 'scene-1' as const,
     movePreviewPositions: { t1: { gridPos: { col: 5, row: 2 } } },
     scalePreviewById: null,
     drawStrokeDragPreview: null,
@@ -55,9 +55,12 @@ function runTests(): void {
     measureVisibleToPlayers: true,
     playerName: 'Player',
     drawHue: 0,
-  });
-  assert(snapshot!.scenes['scene-1']!.tokens[0]!.gridPos.col === 5);
-  assert(snapshot!.updatedAt >= campaign.updatedAt);
+  };
+  assert(hasLivePreviews(withPreview));
+  const snapshot = buildCampaignSyncSnapshot(withPreview);
+  // Previews must not bake into committed campaign positions.
+  assert(snapshot!.scenes['scene-1']!.tokens[0]!.gridPos.col === 1);
+  assert(snapshot === campaign);
 
   console.log('syncSnapshot tests passed');
 }

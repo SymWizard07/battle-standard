@@ -12,6 +12,7 @@
     "build": "npm run generate:icons && tsc && vite build",
     "preview": "vite preview",
     "test:history": "tsx src/lib/history/history.test.ts",
+    "test:dice": "tsx src/features/dice/dice.test.ts",
     "test:stable-storage": "tsx src/lib/stableStorage/stableStorage.test.ts",
     "test:sync-persist": "tsx src/sync/syncProvider.persist.test.ts",
     "test:companion-disk": "tsx companion/shared/config.test.ts && tsx companion/shared/assetFileName.test.ts && tsx companion/shared/campaignDirName.test.ts && tsx companion/host/src/diskWriter.test.ts",
@@ -39,6 +40,10 @@
     "download:template-token-icons": "tsx scripts/download-template-token-icons.ts"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.20.0",
+    "@react-three/drei": "^10.7.8",
+    "@react-three/fiber": "^9.7.0",
+    "@react-three/rapier": "^2.2.0",
     "@trystero-p2p/mqtt": "^0.25.1",
     "dexie": "^4.0.11",
     "konva": "^9.3.20",
@@ -48,6 +53,7 @@
     "react-konva": "^19.0.7",
     "react-resizable-panels": "^4.11.2",
     "react-router-dom": "^7.6.2",
+    "three": "^0.185.1",
     "zustand": "^5.0.5"
   },
   "devDependencies": {
@@ -55,6 +61,7 @@
     "@types/node": "^25.9.1",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
+    "@types/three": "^0.185.4",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-react": "^6.0.2",
     "canvas": "^3.2.3",

@@ -25,6 +25,7 @@ import { resolveSceneEditTool } from '../lib/sceneEdit';
 import { hitMapLayerAt, referenceMapLayer, sceneMaps } from '../lib/sceneMaps';
 import { resolveMapLayerForWorldPoint, tokenAnchorWorld } from '../lib/mapObjectParent';
 import { useRemoteMotionDisplay } from '../hooks/useRemoteMotion';
+import { clearRemoteTokenMotion } from '../sync/remoteMotion';
 import { pinEphemeralMeasurement, useActiveScene, useStore, seesAsPlayer } from '../store/useStore';
 import { confirmAction } from '../features/confirm/confirmDialogStore';
 import { shouldIgnoreGlobalHotkey } from '../lib/keyboardTarget';
@@ -653,13 +654,17 @@ export function MapViewport() {
 
   const armTokenDrag = useCallback(
     (pointerScreen: Point, pointerWorld: Point) => {
-      if (!scene || isCoarsePointer) return;
+      if (!scene || isCoarsePointer) {
+        return;
+      }
       const ids = useStore.getState().selectedTokenIds;
       const hasEditable = ids.some((id) => {
         const t = scene.tokens.find((tok) => tok.id === id);
         return t && canMoveToken(t);
       });
-      if (!hasEditable) return;
+      if (!hasEditable) {
+        return;
+      }
       tokenDragPending.current = { screen: pointerScreen, world: pointerWorld };
     },
     [isCoarsePointer, scene],
@@ -747,6 +752,7 @@ export function MapViewport() {
         return next;
       }),
     }));
+    clearRemoteTokenMotion(Object.keys(positions));
     setMovePreviewPositions(null);
     setInteractionMode('selected');
     moveDragStartWorld.current = null;

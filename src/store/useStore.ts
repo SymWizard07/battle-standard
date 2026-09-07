@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { canEditToken, canMoveToken, syncSelectionNow } from '../sync/syncProvider';
 import { createCampaign, createScene, TOKEN_COLORS } from '../lib/campaignFactory';
 import { isTokenSelectableByPlayer } from '../lib/tokenVisibility';
-import { colorForPlayerName, defaultPlayerColor, hueForPlayerName, snapHue } from '../lib/playerColor';
+import { defaultPlayerColor, hueForPlayerName, snapHue } from '../lib/playerColor';
 import { isMapAssetId } from '../lib/campaignAssets';
 import { saveCampaign, loadCampaignAssets, loadTokenLibraryLayout, saveTokenLibraryLayout, deleteAsset, saveAsset } from '../lib/db';
 import { scheduleStableGlobalMirror, scheduleStableMirror } from '../lib/stableStorage';
@@ -1673,8 +1673,8 @@ export const useStore = create<AppStore>((set, get) => ({
     const state = get();
     const color =
       partial?.color ??
-      (state.role === 'player' && state.playerName.trim()
-        ? colorForPlayerName(state.playerName)
+      (state.role === 'player'
+        ? defaultPlayerColor(state.playerName, state.drawHue ?? 0)
         : TOKEN_COLORS[(scene?.tokens.length ?? 0) % TOKEN_COLORS.length] ?? '#3b82f6');
     const token: Token = {
       id: newId(),
@@ -2009,7 +2009,7 @@ export const useStore = create<AppStore>((set, get) => ({
     }),
   beginLibraryEntryDrag: (entryId) => set({ tokenLibraryEntryDragId: entryId }),
   endLibraryEntryDrag: () => set({ tokenLibraryEntryDragId: null, tokenLibraryDropTargetGroupId: null }),
-  cancelTokenMove: () =>
+  cancelTokenMove: () => {
     set({
       movePreviewPositions: null,
       interactionMode: 'selected',
@@ -2018,7 +2018,8 @@ export const useStore = create<AppStore>((set, get) => ({
       tokenLibraryDragOver: false,
       tokenLibraryDropTargetGroupId: null,
       tokenLibraryDropOverDelete: false,
-    }),
+    });
+  },
   hydrateCampaignTokenLibrary: async () => {
     const { campaign } = get();
     if (!campaign) return;

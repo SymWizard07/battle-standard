@@ -42,6 +42,8 @@ import {
   type SyncCampaignPayload,
 } from './liveSyncPayload';
 import {
+  clearRemoteStrokeMotion,
+  clearRemoteTokenMotion,
   feedRemoteSceneMotion,
   startRemoteMotion,
   stopRemoteMotion,
@@ -167,7 +169,9 @@ function scheduleLiveSyncPublish(
   if (liveSyncTimer) return;
   liveSyncTimer = setTimeout(() => {
     liveSyncTimer = null;
-    if (syncSession.applyingRemote || !sessionActive) return;
+    if (syncSession.applyingRemote || !sessionActive) {
+      return;
+    }
     const state = useStore.getState();
     if (state.role !== role) return;
     const liveState = liveSyncStateFromStore(state);
@@ -195,7 +199,7 @@ function isValidCampaignJson(json: string): boolean {
   }
 }
 
-function applyRemoteCampaign(json: string, role: SessionRole): void {
+function applyRemoteCampaign(json: string, role: SessionRole, peerId?: string): void {
   if (!isValidCampaignJson(json)) return;
   try {
     const payload = JSON.parse(json) as SyncCampaignPayload;
@@ -203,10 +207,21 @@ function applyRemoteCampaign(json: string, role: SessionRole): void {
     const liveSync = payload.liveSync;
     const local = useStore.getState().campaign;
     const activeSceneId = useStore.getState().activeSceneId;
+    const storeState = useStore.getState();
     const sceneId =
       liveSync?.sceneId ?? remote.lastActiveSceneId ?? activeSceneId ?? undefined;
     const prevScene = sceneId ? local?.scenes[sceneId] : undefined;
     const remoteScene = sceneId ? remote.scenes[sceneId] : undefined;
+
+    const protectTokenIds = new Set<string>([
+      ...storeState.selectedTokenIds,
+      ...Object.keys(storeState.movePreviewPositions ?? {}),
+      ...Object.keys(storeState.scalePreviewById ?? {}),
+    ]);
+    const protectDrawStrokeIds = new Set<string>([
+      ...storeState.selectedDrawStrokeIds,
+      ...(storeState.drawStrokeDragPreview ?? []).map((s) => s.id),
+    ]);
 
     const next =
       local != null
@@ -215,9 +230,12 @@ function applyRemoteCampaign(json: string, role: SessionRole): void {
               role === 'player' && playerReceivedHostCampaign,
             localUpdatedAt: local.updatedAt,
             remoteUpdatedAt: remote.updatedAt,
+            protectTokenIds,
+            protectDrawStrokeIds,
           })
         : remote;
     const skipped = local != null && deepEqual(local, next);
+
 
     if (!skipped) {
       syncSession.applyingRemote = true;
@@ -233,16 +251,25 @@ function applyRemoteCampaign(json: string, role: SessionRole): void {
       markPlayerConnected();
     }
 
+    // Keep remote-motion ghosts from fighting local selection/commits.
+    if (protectTokenIds.size > 0) {
+      clearRemoteTokenMotion(protectTokenIds);
+    }
+    if (protectDrawStrokeIds.size > 0) {
+      clearRemoteStrokeMotion(protectDrawStrokeIds);
+    }
+
+
     feedRemoteSceneMotion(sceneId, prevScene, remoteScene, liveSync);
   } catch {
     useStore.getState().setSyncStatus('error');
   }
 }
 
-function handleIncomingCampaign(json: string, role: SessionRole): void {
+function handleIncomingCampaign(json: string, role: SessionRole, peerId?: string): void {
   if (syncSession.applyingRemote) return;
   if (!isValidCampaignJson(json)) return;
-  applyRemoteCampaign(json, role);
+  applyRemoteCampaign(json, role, peerId);
 }
 
 function flushPendingCampaign(): void {
@@ -345,6 +372,9 @@ function wireStoreSync(role: SessionRole): void {
       hasLivePreviews(liveState)
     ) {
       scheduleLiveSyncPublish(role);
+    } else if (previewsChanged && !hasLivePreviews(liveState)) {
+      // Drag ended without a campaign write (e.g. cancel) — clear remote live previews.
+      scheduleLiveSyncPublish(role, { clearEphemeral: true });
     }
 
     if (state.campaign !== prev.campaign && state.campaign) {
@@ -357,7 +387,9 @@ function wireStoreSync(role: SessionRole): void {
       state.selectedDrawStrokeIds !== prev.selectedDrawStrokeIds ||
       state.selectedMeasurementId !== prev.selectedMeasurementId ||
       state.selectDrawShapes !== prev.selectDrawShapes ||
-      state.activeSceneId !== prev.activeSceneId;
+      state.activeSceneId !== prev.activeSceneId ||
+      state.drawHue !== prev.drawHue ||
+      state.playerName !== prev.playerName;
 
     if (selectionChanged) {
       publishSelectionFromStore();
@@ -571,15 +603,15 @@ function wireRoomHandlers(params: ConnectParams): RoomHandlers {
 
       if (role === 'gm') {
         clearCampaignSyncRetry();
-        handleIncomingCampaign(json, 'gm');
+        handleIncomingCampaign(json, 'gm', peerId);
         return;
       }
       if (playerReceivedHostCampaign) {
-        handleIncomingCampaign(json, 'player');
+        handleIncomingCampaign(json, 'player', peerId);
         return;
       }
       if (!isValidCampaignJson(json)) return;
-      handleIncomingCampaign(json, 'player');
+      handleIncomingCampaign(json, 'player', peerId);
     },
     onMeta: (payload) => {
       handleIncomingMeta(payload);

@@ -22,6 +22,7 @@ function createScenesColumn(collapse?: 'left' | 'right' | 'top' | 'bottom'): Spl
         tabs: [
           { id: 'tab-scenes', moduleId: 'scenes', title: 'Scenes' },
           { id: 'tab-initiative', moduleId: 'initiative', title: 'Initiative' },
+          { id: 'tab-dice', moduleId: 'dice', title: 'Dice' },
         ],
       },
       { type: 'module', id: 'settings-pane', moduleId: 'settings' },
@@ -86,6 +87,7 @@ export function createTabletDefaultLayout(): LayoutNode {
             tabs: [
               { id: 'tab-scenes', moduleId: 'scenes', title: 'Scenes' },
               { id: 'tab-initiative', moduleId: 'initiative', title: 'Initiative' },
+              { id: 'tab-dice', moduleId: 'dice', title: 'Dice' },
               { id: 'tab-tokens', moduleId: 'tokens', title: 'Tokens' },
               { id: 'tab-imports', moduleId: 'imports', title: 'Appearance' },
             ],
@@ -128,6 +130,7 @@ export function createMobileDefaultLayout(): LayoutNode {
             tabs: [
               { id: 'tab-scenes', moduleId: 'scenes', title: 'Scenes' },
               { id: 'tab-initiative', moduleId: 'initiative', title: 'Initiative' },
+              { id: 'tab-dice', moduleId: 'dice', title: 'Dice' },
               { id: 'tab-tokens', moduleId: 'tokens', title: 'Tokens' },
               { id: 'tab-imports', moduleId: 'imports', title: 'Appearance' },
               { id: 'tab-info', moduleId: 'info', title: 'Help' },

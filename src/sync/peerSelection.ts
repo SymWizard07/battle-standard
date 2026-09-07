@@ -97,23 +97,24 @@ function lockingPeerForObject(
   return null;
 }
 
-/** Players may not move anything while the GM has an active selection. GM is never blocked. */
+/** GM (not in player view) is never blocked by peer selections. */
 export function canSessionInitiateMovement(): boolean {
-  const { role, playerView, activeSceneId } = useStore.getState();
-  if (role === 'gm' && !playerView) return true;
-  return !gmHasSelectionOnScene(activeSceneId);
+  return true;
 }
 
+/** True if this token is free of another peer's selection lock. */
 export function canSessionMoveToken(tokenId: string): boolean {
-  if (!canSessionInitiateMovement()) return false;
   const { role, playerView, activeSceneId } = useStore.getState();
   if (role === 'gm' && !playerView) return true;
   if (!activeSceneId) return true;
-  return lockingPeerForObject(activeSceneId, 'token', tokenId) == null;
+  const locker = lockingPeerForObject(activeSceneId, 'token', tokenId);
+  if (locker) {
+    return false;
+  }
+  return true;
 }
 
 export function canSessionMoveDrawStrokes(strokeIds: string[]): boolean {
-  if (!canSessionInitiateMovement()) return false;
   if (strokeIds.length === 0) return true;
   const { role, playerView, activeSceneId } = useStore.getState();
   if (role === 'gm' && !playerView) return true;

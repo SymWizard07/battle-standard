@@ -124,17 +124,14 @@ export function colorForPlayerName(name: string): string {
   return colorFromHue(hueForPlayerName(name));
 }
 
-/** Draw/measure color for the current session user (name-based, else active draw hue). */
-export function defaultPlayerColor(playerName: string, drawHue: number): string {
-  if (playerName.trim()) {
-    return colorForPlayerName(playerName);
-  }
+/** Draw/measure/selection color for the current session user (active `drawHue`). */
+export function defaultPlayerColor(_playerName: string, drawHue: number): string {
   return colorFromHue(drawHue);
 }
 
 /** Hue used for the current session user's draw/measure/name preview. */
-export function sessionPlayerHue(playerName: string, drawHue: number): number {
-  return playerName.trim() ? hueForPlayerName(playerName) : snapHue(drawHue);
+export function sessionPlayerHue(_playerName: string, drawHue: number): number {
+  return snapHue(drawHue);
 }
 
 const NAME_INPUT_BG_SATURATION = 38;

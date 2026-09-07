@@ -10,6 +10,7 @@ import { ImportsModule } from './modules/ImportsModule';
 import { InfoModule } from './modules/InfoModule';
 import { InitiativeModule } from './modules/InitiativeModule';
 import { SettingsModule } from './modules/SettingsModule';
+import { DiceModule } from './modules/DiceModule';
 
 function ScenesModule() {
   const { device } = useLayoutModuleContext();
@@ -60,6 +61,7 @@ export const moduleRegistry: Record<ModuleId, ComponentType> = {
   toolbar: ToolbarModule,
   canvas: CanvasModuleWrapper,
   info: InfoModule,
+  dice: DiceModule,
 };
 
 export function renderModule(moduleId: ModuleId): ComponentType {

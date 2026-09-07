@@ -181,6 +181,18 @@ function placementWorldDistance(a: TokenGridPlacement, b: TokenGridPlacement, gr
   return Math.hypot(dx, dy);
 }
 
+export function clearRemoteTokenMotion(ids: Iterable<string>): void {
+  for (const id of ids) {
+    tokenTracks.delete(id);
+  }
+}
+
+export function clearRemoteStrokeMotion(ids: Iterable<string>): void {
+  for (const id of ids) {
+    strokeTracks.delete(id);
+  }
+}
+
 export function feedRemoteSceneMotion(
   sceneId: SceneId | null | undefined,
   prevScene: Scene | undefined,
@@ -189,11 +201,14 @@ export function feedRemoteSceneMotion(
 ): void {
   if (!sceneId || !remoteScene) return;
   const now = Date.now();
+  const localCampaignUpdatedAt = useStore.getState().campaign?.updatedAt ?? 0;
   const { tokenIds: localTokens, strokeIds: localStrokes } = localDragExclusions();
+  const selected = new Set(useStore.getState().selectedTokenIds);
+  const selectedStrokes = new Set(useStore.getState().selectedDrawStrokeIds);
 
   const prevTokens = new Map((prevScene?.tokens ?? []).map((t) => [t.id, t]));
   for (const token of remoteScene.tokens) {
-    if (localTokens.has(token.id)) continue;
+    if (localTokens.has(token.id) || selected.has(token.id)) continue;
     const prev = prevTokens.get(token.id);
     if (prev && !tokenChanged(prev, token)) continue;
 
@@ -207,7 +222,7 @@ export function feedRemoteSceneMotion(
 
   const prevStrokes = new Map((prevScene?.drawStrokes ?? []).map((s) => [s.id, s]));
   for (const stroke of remoteScene.drawStrokes ?? []) {
-    if (localStrokes.has(stroke.id)) continue;
+    if (localStrokes.has(stroke.id) || selectedStrokes.has(stroke.id)) continue;
     const prev = prevStrokes.get(stroke.id);
     if (prev && drawStrokesEqual(prev, stroke)) continue;
 
@@ -247,6 +262,70 @@ export function feedRemoteSceneMotion(
         now,
         (a, b) => deepEqual(a, b),
       );
+    }
+
+    const liveIssuedAt = liveSync.issuedAt ?? 0;
+    const liveStale =
+      liveIssuedAt > 0 && liveIssuedAt < localCampaignUpdatedAt;
+
+    if (liveStale) {
+    }
+
+    if (liveSync.movePreviewPositions === null) {
+      for (const id of [...tokenTracks.keys()]) {
+        if (!localTokens.has(id) && !selected.has(id)) tokenTracks.delete(id);
+      }
+    }
+    if (liveSync.drawStrokeDragPreview === null) {
+      for (const id of [...strokeTracks.keys()]) {
+        if (!localStrokes.has(id) && !selectedStrokes.has(id)) strokeTracks.delete(id);
+      }
+    }
+
+    if (!liveStale && liveSync.movePreviewPositions) {
+      for (const [id, placement] of Object.entries(liveSync.movePreviewPositions)) {
+        if (localTokens.has(id) || selected.has(id)) continue;
+        const base = remoteScene.tokens.find((t) => t.id === id);
+        if (!base) continue;
+        const value: TokenMotionValue = {
+          placement,
+          footprint: { ...base.footprint },
+        };
+        let track = tokenTracks.get(id);
+        if (!track) {
+          track = { samples: [], display: value };
+          tokenTracks.set(id, track);
+        }
+        pushSample(track, value, now, tokenMotionEqual);
+      }
+    }
+
+    if (!liveStale && liveSync.scalePreviewById) {
+      for (const [id, preview] of Object.entries(liveSync.scalePreviewById)) {
+        if (localTokens.has(id) || selected.has(id)) continue;
+        const value: TokenMotionValue = {
+          placement: preview.placement,
+          footprint: { ...preview.footprint },
+        };
+        let track = tokenTracks.get(id);
+        if (!track) {
+          track = { samples: [], display: value };
+          tokenTracks.set(id, track);
+        }
+        pushSample(track, value, now, tokenMotionEqual);
+      }
+    }
+
+    if (!liveStale && liveSync.drawStrokeDragPreview?.length) {
+      for (const stroke of liveSync.drawStrokeDragPreview) {
+        if (localStrokes.has(stroke.id) || selectedStrokes.has(stroke.id)) continue;
+        let track = strokeTracks.get(stroke.id);
+        if (!track) {
+          track = { samples: [], display: stroke };
+          strokeTracks.set(stroke.id, track);
+        }
+        pushSample(track, stroke, now, drawStrokesEqual);
+      }
     }
   }
 }

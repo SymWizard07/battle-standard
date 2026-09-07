@@ -8,6 +8,7 @@ export const MODULE_IDS = [
   'toolOptions',
   'canvas',
   'info',
+  'dice',
 ] as const;
 
 export type ModuleId = (typeof MODULE_IDS)[number];
@@ -81,6 +82,7 @@ export const MODULE_LABELS: Record<ModuleId, string> = {
   toolOptions: 'Tool options',
   canvas: 'Play area',
   info: 'Help',
+  dice: 'Dice',
 };
 
 export function isModuleId(value: string): value is ModuleId {

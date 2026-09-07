@@ -49,6 +49,62 @@ function runTests(): void {
   }
 
   {
+    // Stale peer echo must not walk unlocked GM tokens backward after a newer local commit.
+    const { campaign: local, sceneId } = campaignWithTokens([
+      token('gm', 'gm', 28),
+      token('player', 'player', 2),
+    ]);
+    const { campaign: remote } = campaignWithTokens([
+      token('gm', 'gm', 20),
+      token('player', 'player', 5),
+    ]);
+    local.updatedAt = 200;
+    remote.updatedAt = 100;
+    const merged = mergeCampaignForSync(local, remote, 'gm', {
+      localUpdatedAt: local.updatedAt,
+      remoteUpdatedAt: remote.updatedAt,
+    });
+    const tokens = merged.scenes[sceneId]!.tokens;
+    assert(tokens.find((t) => t.id === 'gm')!.gridPos.col === 28);
+    assert(tokens.find((t) => t.id === 'player')!.gridPos.col === 5);
+  }
+
+  {
+    // Equal updatedAt echoes must not overwrite GM placements either.
+    const { campaign: local, sceneId } = campaignWithTokens([
+      token('gm', 'gm', 28),
+    ]);
+    const { campaign: remote } = campaignWithTokens([
+      token('gm', 'gm', 20),
+    ]);
+    local.updatedAt = 200;
+    remote.updatedAt = 200;
+    const merged = mergeCampaignForSync(local, remote, 'gm', {
+      localUpdatedAt: local.updatedAt,
+      remoteUpdatedAt: remote.updatedAt,
+    });
+    assert(merged.scenes[sceneId]!.tokens.find((t) => t.id === 'gm')!.gridPos.col === 28);
+  }
+
+  {
+    // Locally selected / protected tokens keep local placement.
+    const { campaign: local, sceneId } = campaignWithTokens([
+      token('gm', 'gm', 28),
+    ]);
+    const { campaign: remote } = campaignWithTokens([
+      token('gm', 'gm', 99),
+    ]);
+    local.updatedAt = 100;
+    remote.updatedAt = 500;
+    const merged = mergeCampaignForSync(local, remote, 'gm', {
+      localUpdatedAt: local.updatedAt,
+      remoteUpdatedAt: remote.updatedAt,
+      protectTokenIds: new Set(['gm']),
+    });
+    assert(merged.scenes[sceneId]!.tokens.find((t) => t.id === 'gm')!.gridPos.col === 28);
+  }
+
+  {
     const lockedGm = { ...token('gm', 'gm', 1), lockedForPlayers: true };
     const { campaign: local, sceneId } = campaignWithTokens([
       lockedGm,

@@ -12,6 +12,10 @@ type MergeOptions = {
   preserveLocalUnlockedGmTokens?: boolean;
   localUpdatedAt?: number;
   remoteUpdatedAt?: number;
+  /** Token ids the local peer is actively controlling; keep local placements. */
+  protectTokenIds?: ReadonlySet<string>;
+  /** Draw stroke ids the local peer is actively controlling; keep local geometry. */
+  protectDrawStrokeIds?: ReadonlySet<string>;
 };
 
 function mergeTokenLists(
@@ -27,11 +31,21 @@ function mergeTokenLists(
     for (const token of remote) {
       const localToken = byId.get(token.id);
       if (token.owner === 'player') {
+        if (options?.protectTokenIds?.has(token.id) && localToken) continue;
         byId.set(token.id, token);
         continue;
       }
       if (localToken && isTokenLockedForPlayers(localToken)) continue;
+      if (options?.protectTokenIds?.has(token.id)) continue;
       if (!isTokenLockedForPlayers(token)) {
+        // Reject stale/equal-timestamp peer echoes of unlocked GM tokens.
+        if (
+          options?.localUpdatedAt != null &&
+          options?.remoteUpdatedAt != null &&
+          options.remoteUpdatedAt <= options.localUpdatedAt
+        ) {
+          continue;
+        }
         byId.set(token.id, token);
       }
     }
@@ -77,13 +91,19 @@ function mergeDrawStrokes(
   options?: MergeOptions,
 ): DrawStroke[] {
   const remoteById = new Map(remote.map((stroke) => [stroke.id, stroke]));
+  const remoteIsStaleOrEqual =
+    options?.localUpdatedAt != null &&
+    options?.remoteUpdatedAt != null &&
+    options.remoteUpdatedAt <= options.localUpdatedAt;
 
   if (role === 'gm') {
     const byId = new Map(local.map((stroke) => [stroke.id, stroke]));
     const order = local.map((stroke) => stroke.id);
 
     for (const stroke of remote) {
+      if (options?.protectDrawStrokeIds?.has(stroke.id)) continue;
       if (isPlayerDrawStroke(stroke)) {
+        if (remoteIsStaleOrEqual && byId.has(stroke.id)) continue;
         if (!byId.has(stroke.id)) order.push(stroke.id);
         byId.set(stroke.id, stroke);
         continue;
@@ -98,6 +118,7 @@ function mergeDrawStrokes(
 
     for (const id of [...byId.keys()]) {
       const stroke = byId.get(id)!;
+      if (options?.protectDrawStrokeIds?.has(id)) continue;
       if (isPlayerDrawStroke(stroke) && !remoteById.has(id)) {
         byId.delete(id);
         const idx = order.indexOf(id);
@@ -112,6 +133,11 @@ function mergeDrawStrokes(
   const order = remote.map((stroke) => stroke.id);
 
   for (const stroke of local) {
+    if (options?.protectDrawStrokeIds?.has(stroke.id)) {
+      byId.set(stroke.id, stroke);
+      if (!order.includes(stroke.id)) order.push(stroke.id);
+      continue;
+    }
     if (!isPlayerDrawStroke(stroke)) continue;
     if (!byId.has(stroke.id)) {
       byId.set(stroke.id, stroke);

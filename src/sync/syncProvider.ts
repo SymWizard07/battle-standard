@@ -199,7 +199,7 @@ function isValidCampaignJson(json: string): boolean {
   }
 }
 
-function applyRemoteCampaign(json: string, role: SessionRole, peerId?: string): void {
+function applyRemoteCampaign(json: string, role: SessionRole, _peerId?: string): void {
   if (!isValidCampaignJson(json)) return;
   try {
     const payload = JSON.parse(json) as SyncCampaignPayload;

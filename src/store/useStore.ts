@@ -4,7 +4,7 @@ import { createCampaign, createScene, TOKEN_COLORS } from '../lib/campaignFactor
 import { isTokenSelectableByPlayer } from '../lib/tokenVisibility';
 import { defaultPlayerColor, hueForPlayerName, snapHue } from '../lib/playerColor';
 import { isMapAssetId } from '../lib/campaignAssets';
-import { saveCampaign, loadCampaignAssets, loadTokenLibraryLayout, saveTokenLibraryLayout, deleteAsset, saveAsset } from '../lib/db';
+import { saveCampaign, loadCampaignAssets, loadTokenLibraryLayout, saveTokenLibraryLayout, deleteAsset, saveAsset, loadAsset } from '../lib/db';
 import { scheduleStableGlobalMirror, scheduleStableMirror } from '../lib/stableStorage';
 import { isTokenLibraryAsset, mapAssetIdsInCampaign } from '../lib/campaignAssets';
 import { newId } from '../lib/ids';
@@ -104,7 +104,6 @@ import {
 } from '../lib/tokenLibrary';
 import { inspectTargetFromAssetEntry } from '../lib/importsInspect';
 import { isTemplateTokenAssetId } from '../lib/templateTokenImage';
-import { scaleAppearanceBetweenFootprints } from '../lib/tokenImageFit';
 import type { TokenScalePreview } from '../lib/tokenScale';
 import { captureTokenSheet } from '../lib/tokenSheet';
 import {
@@ -320,6 +319,8 @@ interface UiState {
   importsInspectDirty: boolean;
   importsMaintainAspect: boolean;
   importsEditOutline: boolean;
+  /** Appearance editor: free resize vs non-destructive crop framing. */
+  importsImageEditMode: 'resize' | 'crop';
   importsUploadScope: 'campaign' | 'global';
   setImportsInspectTarget: (
     target: ImportsInspectTarget | null,
@@ -332,6 +333,7 @@ interface UiState {
   setImportsInspectDirty: (dirty: boolean) => void;
   setImportsMaintainAspect: (v: boolean) => void;
   setImportsEditOutline: (v: boolean) => void;
+  setImportsImageEditMode: (mode: 'resize' | 'crop') => void;
   setImportsUploadScope: (scope: 'campaign' | 'global') => void;
   /** Token outlined while hovering its initiative row. */
   initiativeHoveredTokenId: string | null;
@@ -368,7 +370,7 @@ interface CampaignState {
   hoveredTokenId: string | null;
   setHoveredTokenId: (id: string | null) => void;
   setCampaign: (c: Campaign | null) => void;
-  setActiveScene: (id: SceneId) => void;
+  setActiveScene: (id: SceneId, opts?: { fromRemote?: boolean }) => void;
   persist: () => Promise<void>;
   updateScene: (sceneId: SceneId, updater: (s: Scene) => Scene) => void;
   addScene: (name: string) => void;
@@ -439,6 +441,8 @@ interface CampaignState {
   bringDrawStrokesToFront: (sceneId: SceneId, strokeIds: string[]) => void;
   registerAssetUrl: (assetId: string, url: string) => void;
   revokeAssetUrl: (assetId: string) => void;
+  /** Replace an asset's blob in IDB and refresh the object URL (e.g. after crop bake). */
+  replaceAssetBlob: (assetId: string, blob: Blob, mimeType?: string) => Promise<void>;
   tokenLibraryDrop: TokenLibraryDropPayload | null;
   tokenLibraryEntryDragId: string | null;
   tokenDragOffMap: boolean;
@@ -1213,6 +1217,7 @@ export const useStore = create<AppStore>((set, get) => ({
   importsInspectDirty: false,
   importsMaintainAspect: true,
   importsEditOutline: false,
+  importsImageEditMode: 'resize',
   importsUploadScope: 'campaign',
   setImportsInspectTarget: (target, opts) =>
     set({
@@ -1236,6 +1241,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setImportsInspectDirty: (dirty) => set({ importsInspectDirty: dirty }),
   setImportsMaintainAspect: (v) => set({ importsMaintainAspect: v }),
   setImportsEditOutline: (v) => set({ importsEditOutline: v }),
+  setImportsImageEditMode: (mode) => set({ importsImageEditMode: mode }),
   setImportsUploadScope: (scope) => set({ importsUploadScope: scope }),
   initiativeHoveredTokenId: null,
   setInitiativeHoveredTokenId: (id) => set({ initiativeHoveredTokenId: id }),
@@ -1436,10 +1442,15 @@ export const useStore = create<AppStore>((set, get) => ({
     }
     void get().hydrateCampaignTokenLibrary();
   },
-  setActiveScene: (id) => {
-    const { campaign } = get();
+  setActiveScene: (id, opts) => {
+    const state = get();
+    // Players follow the host scene; only remote meta/campaign sync may switch them.
+    if (state.role === 'player' && !opts?.fromRemote) return;
+    const { campaign } = state;
     if (!campaign) return;
-    const scene = normalizeScene(campaign.scenes[id]);
+    const raw = campaign.scenes[id];
+    if (!raw) return;
+    const scene = normalizeScene(raw);
     setGridOffset(scene.gridOffset ?? DEFAULT_GRID_OFFSET);
     const updated = { ...campaign, lastActiveSceneId: id, updatedAt: Date.now() };
     set({ campaign: updated, activeSceneId: id, dirty: true });
@@ -1980,6 +1991,24 @@ export const useStore = create<AppStore>((set, get) => ({
       return { assetUrls: rest };
     });
   },
+  replaceAssetBlob: async (assetId, blob, mimeType = 'image/png') => {
+    const existing = await loadAsset(assetId);
+    if (!existing) return;
+    await saveAsset({
+      ...existing,
+      blob,
+      mimeType,
+    });
+    const prev = get().assetUrls[assetId];
+    if (prev) URL.revokeObjectURL(prev);
+    get().registerAssetUrl(assetId, URL.createObjectURL(blob));
+    const campaignId = existing.campaignId;
+    if (campaignId === GLOBAL_CAMPAIGN_ID) {
+      scheduleStableGlobalMirror();
+    } else {
+      scheduleStableMirror(campaignId);
+    }
+  },
 
   tokenLibraryDrop: null,
   tokenLibraryEntryDragId: null,
@@ -2078,18 +2107,21 @@ export const useStore = create<AppStore>((set, get) => ({
         const tokens = scene.tokens.map((t) => {
           if (t.imageAssetId !== assetId) return t;
           sceneChanged = true;
-          const scaled = scaleAppearanceBetweenFootprints(
-            appearance.footprint,
-            t.footprint,
-            {
-              imageTransform: appearance.imageTransform,
-              outline: appearance.outline,
-            },
-          );
           return {
             ...t,
-            imageTransform: scaled.imageTransform,
-            outline: scaled.outline,
+            footprint: {
+              w: appearance.footprint.w,
+              h: appearance.footprint.h,
+            },
+            imageTransform: {
+              offset: { ...appearance.imageTransform.offset },
+              size: { ...appearance.imageTransform.size },
+            },
+            outline: {
+              shape: appearance.outline.shape,
+              offset: { ...appearance.outline.offset },
+              size: { ...appearance.outline.size },
+            },
           };
         });
         if (sceneChanged) {

@@ -1,9 +1,16 @@
 import { useFrame } from '@react-three/fiber';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BufferGeometry, EdgesGeometry, ShaderMaterial } from 'three';
 import { dieAccentColor, getDieMeshSpec } from './diceMeshes';
 import { useDieFaceShaderStore } from './dieFaceShaderStore';
-import { getDieFaceTextures } from './dieFaceTextures';
+import {
+  getDieFaceTexturesFromLayout,
+  invalidateDieFaceTextureCache,
+} from './dieFaceTextures';
+import {
+  defaultDieFaceGlyphLayout,
+  ensureDieFaceFontLoaded,
+} from './dieFaceFonts';
 import type { DiceSides } from './diceTypes';
 import { DIE_SCALE } from './diceTypes';
 import {
@@ -30,8 +37,8 @@ function DieFaceShaderMaterial({
   faceColorHex,
 }: {
   fragmentSource: string;
-  albedoMap: ReturnType<typeof getDieFaceTextures>['map'] | null;
-  normalMap: ReturnType<typeof getDieFaceTextures>['normalMap'] | null;
+  albedoMap: ReturnType<typeof getDieFaceTexturesFromLayout>['map'] | null;
+  normalMap: ReturnType<typeof getDieFaceTexturesFromLayout>['normalMap'] | null;
   faceColorHex: string;
 }) {
   // Stable per die instance for shader variation (phase, seeds, etc.).
@@ -76,6 +83,28 @@ export function DieVisual({
   const spec = useMemo(() => getDieMeshSpec(sides), [sides]);
   const color = dieAccentColor(sides);
   const customFragment = useDieFaceShaderStore((s) => s.shaders[sides] ?? null);
+  const layoutState = useDieFaceShaderStore((s) => s.layouts[sides]);
+  const faceLayout = useMemo(
+    () => defaultDieFaceGlyphLayout(layoutState),
+    [
+      layoutState?.fontId,
+      layoutState?.fontSize,
+      layoutState?.offsetX,
+      layoutState?.offsetY,
+    ],
+  );
+  const [fontEpoch, setFontEpoch] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    void ensureDieFaceFontLoaded(faceLayout.fontId).then(() => {
+      if (cancelled) return;
+      invalidateDieFaceTextureCache(faceLayout.fontId);
+      setFontEpoch((n) => n + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [faceLayout.fontId]);
   const edges = useMemo(() => {
     // d10 ships a deduped outline so the equator isn't double-stroked.
     if (spec.outline) return spec.outline;
@@ -93,8 +122,11 @@ export function DieVisual({
 
   const needFaceTex = showLabels || customFragment != null;
   const faceTex = useMemo(
-    () => (needFaceTex ? getDieFaceTextures(sides, color, spec.faces) : null),
-    [needFaceTex, sides, color, spec.faces],
+    () =>
+      needFaceTex
+        ? getDieFaceTexturesFromLayout(sides, color, spec.faces, faceLayout)
+        : null,
+    [needFaceTex, sides, color, spec.faces, faceLayout, fontEpoch],
   );
 
   return (

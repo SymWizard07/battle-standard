@@ -84,8 +84,31 @@ export function ImportsPanel() {
   const setMaintainAspect = useStore((s) => s.setImportsMaintainAspect);
   const editOutline = useStore((s) => s.importsEditOutline);
   const setEditOutline = useStore((s) => s.setImportsEditOutline);
+  const imageEditMode = useStore((s) => s.importsImageEditMode);
+  const setImageEditMode = useStore((s) => s.setImportsImageEditMode);
+  const replaceAssetBlob = useStore((s) => s.replaceAssetBlob);
   const dirty = useStore((s) => s.importsInspectDirty);
   const setDirty = useStore((s) => s.setImportsInspectDirty);
+
+  const finalizeCropIfNeeded = useCallback(async () => {
+    await editorRef.current?.finalizeCrop();
+  }, []);
+
+  const onSave = async () => {
+    if (!target) return;
+    await finalizeCropIfNeeded();
+    if (useStore.getState().importsImageEditMode === 'crop') {
+      setImageEditMode('resize');
+    }
+    const latest = useStore.getState().importsInspectTarget;
+    if (!latest) return;
+    saveTokenAppearance(latest.assetId, {
+      footprint: latest.footprint,
+      imageTransform: latest.imageTransform,
+      outline: latest.outline,
+    });
+    setDirty(false);
+  };
 
   const focusEditor = useCallback(() => {
     activateModule(device, 'imports');
@@ -241,16 +264,6 @@ export function ImportsPanel() {
     [patchTargetStore],
   );
 
-  const onSave = () => {
-    if (!target) return;
-    saveTokenAppearance(target.assetId, {
-      footprint: target.footprint,
-      imageTransform: target.imageTransform,
-      outline: target.outline,
-    });
-    setDirty(false);
-  };
-
   const pickModeActive = importsTokenPickActive || libraryEntryPickActive;
 
   const toggleEyedropper = () => {
@@ -281,11 +294,19 @@ export function ImportsPanel() {
       : cellRectFromTransform(target.imageTransform)
     : null;
   const canRecenter =
-    Boolean(target && activeRect) &&
-    !isCellRectCenteredOnFootprint(target!.footprint, activeRect!);
+    Boolean(target) &&
+    (imageEditMode === 'crop' && !editOutline
+      ? true
+      : Boolean(activeRect) &&
+        !isCellRectCenteredOnFootprint(target!.footprint, activeRect!));
 
   const recenterActive = () => {
-    if (!target || !activeRect) return;
+    if (!target) return;
+    if (imageEditMode === 'crop' && !editOutline) {
+      editorRef.current?.recenterCrop();
+      return;
+    }
+    if (!activeRect) return;
     const next = recenterCellRectOnFootprint(target.footprint, activeRect);
     if (editOutline) {
       patchTarget({ outline: outlineFromCellRect(next, target.outline.shape) });
@@ -340,6 +361,7 @@ export function ImportsPanel() {
                 imageTransform={target.imageTransform}
                 outline={target.outline}
                 editOutline={editOutline}
+                imageEditMode={imageEditMode}
                 maintainAspect={maintainAspect}
                 label={target.name}
                 onImageTransformChange={(imageTransform) =>
@@ -347,6 +369,9 @@ export function ImportsPanel() {
                 }
                 onOutlineChange={(outline) => patchTarget({ outline })}
                 onFootprintChange={(footprint) => patchTarget({ footprint })}
+                onReplaceImageBlob={async (blob) => {
+                  await replaceAssetBlob(target.assetId, blob, 'image/png');
+                }}
               />
             ) : (
               <div className="flex h-full w-full items-center justify-center bg-slate-950/50 px-4 text-center text-sm text-slate-500">
@@ -374,9 +399,37 @@ export function ImportsPanel() {
 
           <div className="space-y-2 border-b border-slate-800 p-3">
             <div className="flex h-12 gap-1">
+              <ToolOptionSegmentedControl
+                className="min-w-0 flex-1"
+                segments={[
+                  {
+                    id: 'resize',
+                    label: 'Resize',
+                    active: imageEditMode === 'resize',
+                    disabled: !target || editOutline,
+                    title: 'Freely scale and move the image',
+                    onClick: () => {
+                      void (async () => {
+                        await finalizeCropIfNeeded();
+                        setImageEditMode('resize');
+                      })();
+                    },
+                  },
+                  {
+                    id: 'crop',
+                    label: 'Crop',
+                    active: imageEditMode === 'crop',
+                    disabled: !target || editOutline,
+                    title:
+                      'Move and resize the crop box to cut the token size — image stays put',
+                    onClick: () => setImageEditMode('crop'),
+                  },
+                ]}
+              />
               <ToolOptionToggle
                 label="Maintain aspect ratio"
                 active={maintainAspect}
+                disabled={!target || editOutline}
                 onClick={() => setMaintainAspect(!maintainAspect)}
               />
               <ToolOptionButton
@@ -386,7 +439,9 @@ export function ImportsPanel() {
                 title={
                   editOutline
                     ? 'Center the outline on the token footprint'
-                    : 'Center the image on the token footprint'
+                    : imageEditMode === 'crop'
+                      ? 'Center the crop box on the image'
+                      : 'Center the image on the token footprint'
                 }
               />
             </div>

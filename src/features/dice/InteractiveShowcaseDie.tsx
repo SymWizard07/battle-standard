@@ -347,7 +347,8 @@ export function InteractiveShowcaseDie({ sides, position, active = true }: Props
         e.stopPropagation();
         const source = useDieFaceShaderStore.getState().dragSource;
         if (!source) return;
-        setShader(sides, source);
+        const layout = useDieFaceShaderStore.getState().dragLayout ?? undefined;
+        setShader(sides, source, layout);
         endShaderDrag();
         setDropHover(false);
         gl.domElement.style.cursor = hovered.current ? 'grab' : 'default';

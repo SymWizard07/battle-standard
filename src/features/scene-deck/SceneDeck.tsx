@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { SceneDeckNode } from '../../lib/types';
-import { useStore } from '../../store/useStore';
+import { seesAsPlayer, useStore } from '../../store/useStore';
 import { pushSceneToPlayers } from '../../sync/syncProvider';
 import { confirmAction } from '../confirm/confirmDialogStore';
 import { ScenePreview } from './ScenePreview';
@@ -36,6 +36,7 @@ export function SceneDeck({
   const role = useStore((s) => s.role);
   const playerView = useStore((s) => s.playerView);
   const isGm = role === 'gm' && !playerView;
+  const asPlayer = seesAsPlayer(role, playerView);
   const syncStatus = useStore((s) => s.syncStatus);
   const scenePreviewUrls = useStore((s) => s.scenePreviewUrls);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -43,12 +44,18 @@ export function SceneDeck({
 
   if (!campaign) return null;
 
-  const sceneIds = flattenScenes(campaign.sceneDeck);
+  const allSceneIds = flattenScenes(campaign.sceneDeck);
+  // Players (and GM player-view) only see the currently active scene.
+  const sceneIds = asPlayer
+    ? activeSceneId
+      ? [activeSceneId]
+      : []
+    : allSceneIds;
   const isCompact = variant === 'inline' || variant === 'sheet';
   const showBody = variant === 'inline' || variant === 'sheet' || variant === 'module' || !collapsed;
 
   const handleAddScene = () => {
-    addScene(`Scene ${sceneIds.length + 1}`);
+    addScene(`Scene ${allSceneIds.length + 1}`);
   };
 
   const handleDeleteScene = async (sceneId: string, sceneName: string) => {
@@ -66,7 +73,7 @@ export function SceneDeck({
     <div className="flex h-full flex-col bg-slate-900">
       {variant !== 'inline' && (
       <header className="safe-top flex items-center justify-between border-b border-slate-700 px-3 py-2">
-        <h2 className="text-sm font-semibold">Scenes</h2>
+        <h2 className="text-sm font-semibold">{asPlayer ? 'Scene' : 'Scenes'}</h2>
         <div className="flex gap-1">
           {variant === 'sheet' && (
             <button
@@ -129,6 +136,25 @@ export function SceneDeck({
                     Save
                   </button>
                 </form>
+              ) : asPlayer ? (
+                <div
+                  className={`relative flex w-full flex-col text-left ${
+                    isCompact
+                      ? `gap-0.5 rounded-md p-0.5 ${active ? 'bg-sky-600/30 ring-1 ring-sky-500' : 'bg-slate-800'}`
+                      : `gap-2 rounded-xl p-2 text-sm ${active ? 'bg-sky-600/30 ring-2 ring-sky-500' : 'bg-slate-800'}`
+                  }`}
+                  aria-current={active ? 'true' : undefined}
+                >
+                  <ScenePreview previewUrl={scenePreviewUrls[id]} compact={isCompact} />
+                  <span
+                    className={`truncate font-medium leading-tight ${
+                      isCompact ? 'px-0.5 text-[9px]' : 'px-1 text-sm'
+                    }`}
+                    title={scene.name}
+                  >
+                    {scene.name}
+                  </span>
+                </div>
               ) : (
                 <button
                   type="button"
@@ -171,7 +197,7 @@ export function SceneDeck({
                       >
                         ✎
                       </button>
-                      {sceneIds.length > 1 && (
+                      {allSceneIds.length > 1 && (
                         <button
                           type="button"
                           className="min-h-5 min-w-5 rounded bg-slate-900/80 text-[9px] text-red-400"
@@ -197,7 +223,7 @@ export function SceneDeck({
                   >
                     Rename
                   </button>
-                  {sceneIds.length > 1 && (
+                  {allSceneIds.length > 1 && (
                     <button
                       type="button"
                       className="text-xs text-red-400 underline"

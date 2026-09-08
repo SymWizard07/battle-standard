@@ -79,8 +79,23 @@ export const SHADER_PREVIEW_STARTER = FACE_SHADER_STARTER;
 
 let stubAlbedo: Texture | null = null;
 let stubNormal: Texture | null = null;
-let previewAlbedo: Texture | null = null;
-let previewNormal: Texture | null = null;
+const previewGlyphCache = new Map<string, { albedo: Texture; normal: Texture }>();
+
+/** Drop cached preview glyphs after a font finishes loading. */
+export function clearPreviewGlyphCache(fontFamily?: string, sample?: string) {
+  if (fontFamily == null) {
+    previewGlyphCache.clear();
+    return;
+  }
+  if (sample != null) {
+    previewGlyphCache.delete(`${fontFamily}::${sample}`);
+    return;
+  }
+  const prefix = `${fontFamily}::`;
+  for (const key of [...previewGlyphCache.keys()]) {
+    if (key.startsWith(prefix)) previewGlyphCache.delete(key);
+  }
+}
 
 /** 1×1 white albedo for missing maps. */
 export function getStubAlbedoMap(): Texture {
@@ -139,13 +154,22 @@ function heightToNormalMap(height: ImageData, strength = 2.8): ImageData {
 }
 
 /**
- * White-field atlas cell with a dark “13” glyph for the settings shader preview
+ * White-field atlas cell with a dark sample glyph for the settings shader preview
  * (so adaptive ink / normal sampling can be tested off-die).
  */
-export function getPreviewGlyphMaps(): { albedo: Texture; normal: Texture } {
-  if (previewAlbedo && previewNormal) {
-    return { albedo: previewAlbedo, normal: previewNormal };
-  }
+export function getPreviewGlyphMaps(
+  fontFamily = '"Segoe UI", system-ui, sans-serif',
+  sample = '13',
+  fontSizePercent = 100,
+  offsetX = 0,
+  offsetY = 0,
+): { albedo: Texture; normal: Texture } {
+  const sizePct = Math.max(50, Math.min(200, Math.round(fontSizePercent)));
+  const oxPct = Math.max(-40, Math.min(40, Math.round(offsetX)));
+  const oyPct = Math.max(-40, Math.min(40, Math.round(offsetY)));
+  const key = `${fontFamily}::${sample}::${sizePct}::${oxPct}::${oyPct}`;
+  const hit = previewGlyphCache.get(key);
+  if (hit) return hit;
 
   const size = 256;
   const albedoCanvas = document.createElement('canvas');
@@ -162,20 +186,21 @@ export function getPreviewGlyphMaps(): { albedo: Texture; normal: Texture } {
   hCtx.fillStyle = '#808080';
   hCtx.fillRect(0, 0, size, size);
 
-  const cx = size * 0.5;
-  const cy = size * 0.52;
-  const fontPx = size * 0.48;
-  aCtx.font = `700 ${fontPx}px "Segoe UI", system-ui, sans-serif`;
+  const cx = size * 0.5 + (oxPct / 100) * size;
+  const cy = size * 0.52 - (oyPct / 100) * size;
+  const fontPx =
+    size * (sample.length > 1 ? 0.42 : 0.48) * (sizePct / 100);
+  aCtx.font = `700 ${fontPx}px ${fontFamily}`;
   aCtx.textAlign = 'center';
   aCtx.textBaseline = 'middle';
   aCtx.fillStyle = '#1e293b';
-  aCtx.fillText('13', cx, cy);
+  aCtx.fillText(sample, cx, cy);
 
   hCtx.font = aCtx.font;
   hCtx.textAlign = 'center';
   hCtx.textBaseline = 'middle';
   hCtx.fillStyle = '#101010';
-  hCtx.fillText('13', cx, cy);
+  hCtx.fillText(sample, cx, cy);
 
   const normalData = heightToNormalMap(hCtx.getImageData(0, 0, size, size), 2.8);
   const normalCanvas = document.createElement('canvas');
@@ -197,9 +222,9 @@ export function getPreviewGlyphMaps(): { albedo: Texture; normal: Texture } {
   normal.magFilter = LinearFilter;
   normal.needsUpdate = true;
 
-  previewAlbedo = albedo;
-  previewNormal = normal;
-  return { albedo, normal };
+  const maps = { albedo, normal };
+  previewGlyphCache.set(key, maps);
+  return maps;
 }
 
 export function hexToFaceColor(hex: string): Vector3 {

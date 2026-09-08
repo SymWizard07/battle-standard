@@ -7,6 +7,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
 } from 'react';
 import {
   computeOpaqueShapeFromImage,
@@ -14,8 +16,11 @@ import {
   cacheOpaqueShape,
 } from '../../lib/imageOpaqueBounds';
 import {
+  appearanceFromCropRect,
+  bakeCroppedImageBlob,
   cellRectFromOutline,
   cellRectFromTransform,
+  clampCropRectInsideImage,
   coverImageTransform,
   defaultImageTransform,
   isDefaultImageTransform,
@@ -23,9 +28,13 @@ import {
   outlineFromCellRect,
   outlineFromOpaqueShape,
   outlineToLocalPx,
+  recenterCropRectOnImage,
   scaleCellRectFromMidEdge,
+  scaleCropRectFromCorner,
   transformFromCellRect,
   translateCellRect,
+  type CellRect,
+  type CropCorner,
   type MidEdge,
 } from '../../lib/tokenImageFit';
 import { GRID_SIZE_PX } from '../../lib/fixedGrid';
@@ -36,7 +45,10 @@ import type {
 } from '../../lib/types';
 
 const EDGES: MidEdge[] = ['n', 'e', 's', 'w'];
+const CROP_CORNERS: CropCorner[] = ['nw', 'ne', 'sw', 'se'];
 const HANDLE_PX = 10;
+const CROP_HANDLE_LEN = 16;
+const CROP_HANDLE_THICK = 3;
 /** Center cell ≈ this fraction of editor height at max zoom (≤0.5 so a 2× cover fit stays on-screen). */
 const CENTER_CELL_HEIGHT_FRAC = 0.48;
 /** View zoom: 1 = starting fit; higher values zoom in. */
@@ -126,11 +138,15 @@ type Props = {
   imageTransform: TokenImageTransform;
   outline: TokenOutlineStyle;
   editOutline: boolean;
+  /** Free resize vs crop-box framing (image stays put; crop rect moves). */
+  imageEditMode: 'resize' | 'crop';
   maintainAspect: boolean;
   label?: string;
   onImageTransformChange: (next: TokenImageTransform) => void;
   onOutlineChange: (next: TokenOutlineStyle) => void;
   onFootprintChange: (next: { w: number; h: number }) => void;
+  /** Persist a baked crop PNG over the current asset. */
+  onReplaceImageBlob?: (blob: Blob) => Promise<void>;
 };
 
 function clientToLocal(
@@ -178,6 +194,14 @@ export type ImportsGridEditorHandle = {
     shiftKey: boolean;
     preventDefault: () => void;
   }) => boolean;
+  /** Crop mode: center the crop box on the frozen image. */
+  recenterCrop: () => void;
+  /**
+   * Bake the current crop into a PNG (drops pixels outside the box), reset the
+   * image transform to fill the new footprint, and clear the crop session.
+   * No-op when not cropping. Call before switching to Resize or saving.
+   */
+  finalizeCrop: () => Promise<void>;
 };
 
 export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
@@ -188,26 +212,51 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
       imageTransform,
       outline,
       editOutline,
+      imageEditMode,
       maintainAspect,
       label,
       onImageTransformChange,
       onOutlineChange,
-      onFootprintChange: _onFootprintChange,
+      onFootprintChange,
+      onReplaceImageBlob,
     },
     ref,
   ) {
-  void _onFootprintChange;
+  const cropMode = imageEditMode === 'crop' && !editOutline;
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [viewZoom, setViewZoom] = useState(VIEW_ZOOM_MIN);
   const [viewPan, setViewPan] = useState({ x: 0, y: 0 });
   const [panelFocused, setPanelFocused] = useState(false);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
+  /** While cropping: image placement is frozen; only the crop rect moves/resizes. */
+  const [cropSession, setCropSession] = useState<{
+    baseImage: TokenImageTransform;
+    crop: CellRect;
+    /** Stable editor layout size so shrinking the footprint doesn't jump the view. */
+    layoutFootprint: { w: number; h: number };
+    baseFootprint: { w: number; h: number };
+    baseOutline: TokenOutlineStyle;
+  } | null>(null);
+  const cropModeWasActive = useRef(false);
   const dragRef = useRef<
     | {
         kind: 'scale';
         edge: MidEdge;
         start: { offset: Point; size: { w: number; h: number } };
+        originLocal: Point;
+      }
+    | {
+        kind: 'cropScale';
+        corner: CropCorner;
+        startCrop: CellRect;
+        baseImage: TokenImageTransform;
+        originLocal: Point;
+      }
+    | {
+        kind: 'cropTranslate';
+        startCrop: CellRect;
+        baseImage: TokenImageTransform;
         originLocal: Point;
       }
     | {
@@ -345,13 +394,14 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
   // Stretch-to-footprint defaults distort non-square art; switch to cover (natural aspect)
   // so mid-edge scaling stays uniform and overflow into neighbor cells is visible.
   useEffect(() => {
-    if (!img || img.naturalHeight <= 0 || editOutline) return;
+    if (!img || img.naturalHeight <= 0 || editOutline || cropMode) return;
     if (!isDefaultImageTransform(footprint, imageTransform)) return;
     const naturalAspect = img.naturalWidth / img.naturalHeight;
     const fpAspect = footprint.w / Math.max(footprint.h, 1e-6);
     if (Math.abs(naturalAspect - fpAspect) < 1e-6) return;
     onImageTransformChange(coverImageTransform(footprint, naturalAspect));
   }, [
+    cropMode,
     editOutline,
     footprint.h,
     footprint.w,
@@ -360,9 +410,82 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
     onImageTransformChange,
   ]);
 
+  // Enter/leave crop: freeze the image, start with a footprint-sized crop window.
+  useEffect(() => {
+    if (cropMode && !cropModeWasActive.current) {
+      const baseImage = {
+        offset: { ...imageTransform.offset },
+        size: { ...imageTransform.size },
+      };
+      const baseFootprint = { w: footprint.w, h: footprint.h };
+      const baseOutline = {
+        shape: outline.shape,
+        offset: { ...outline.offset },
+        size: { ...outline.size },
+      };
+      const crop = clampCropRectInsideImage(
+        {
+          offset: { x: 0, y: 0 },
+          size: { w: footprint.w, h: footprint.h },
+        },
+        baseImage,
+      );
+      setCropSession({
+        baseImage,
+        crop,
+        layoutFootprint: baseFootprint,
+        baseFootprint,
+        baseOutline,
+      });
+      const next = appearanceFromCropRect(
+        baseImage,
+        crop,
+        baseFootprint,
+        baseOutline,
+      );
+      onFootprintChange(next.footprint);
+      onImageTransformChange(next.imageTransform);
+      onOutlineChange(next.outline);
+    } else if (!cropMode) {
+      setCropSession(null);
+    }
+    cropModeWasActive.current = cropMode;
+    // Only re-init on crop mode edge; capture transform at enter time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional rising-edge capture
+  }, [cropMode]);
+
+  const finalizeCropRef = useRef<() => Promise<void>>(async () => {});
+  finalizeCropRef.current = async () => {
+    const session = cropSession;
+    if (!session || !img || img.naturalHeight <= 0) {
+      setCropSession(null);
+      return;
+    }
+    const next = appearanceFromCropRect(
+      session.baseImage,
+      session.crop,
+      session.baseFootprint,
+      session.baseOutline,
+    );
+    const blob = await bakeCroppedImageBlob(
+      img,
+      session.baseImage,
+      session.crop,
+    );
+    if (onReplaceImageBlob) {
+      await onReplaceImageBlob(blob);
+    }
+    onFootprintChange(next.footprint);
+    onOutlineChange(next.outline);
+    onImageTransformChange(defaultImageTransform(next.footprint));
+    setCropSession(null);
+  };
+
+  const layoutFootprint = cropSession?.layoutFootprint ?? footprint;
+
   const { realPerDisplay } = useMemo(
-    () => displayFootprintScale(footprint),
-    [footprint.h, footprint.w],
+    () => displayFootprintScale(layoutFootprint),
+    [layoutFootprint.h, layoutFootprint.w],
   );
 
   /** One display cell in px at the current view zoom (1 = starting fit). */
@@ -371,10 +494,10 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
   /** Pixels per real footprint cell. */
   const pxPerRealCell = cellPx > 0 ? cellPx / realPerDisplay : 0;
 
-  // Footprint AABB: centered fit + view pan (MMB / zoom-to-cursor).
+  // Layout AABB: during crop, keep the enter-time footprint so the view doesn't jump.
   const footprintPx = {
-    w: footprint.w * pxPerRealCell,
-    h: footprint.h * pxPerRealCell,
+    w: layoutFootprint.w * pxPerRealCell,
+    h: layoutFootprint.h * pxPerRealCell,
   };
   const originPx = {
     x: (size.w - footprintPx.w) / 2 + viewPan.x,
@@ -386,21 +509,34 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
     viewPan,
     size,
     realPerDisplay,
-    footprintW: footprint.w,
-    footprintH: footprint.h,
+    footprintW: layoutFootprint.w,
+    footprintH: layoutFootprint.h,
   };
 
   // Re-clamp after resize so the camera stays inside the original fit bounds.
   useEffect(() => {
     if (size.w <= 0 || size.h <= 0) return;
     setViewPan((pan) => {
-      const next = clampViewPan(pan, viewZoom, size, footprint, realPerDisplay);
+      const next = clampViewPan(
+        pan,
+        viewZoom,
+        size,
+        layoutFootprint,
+        realPerDisplay,
+      );
       if (Math.abs(next.x - pan.x) < 1e-9 && Math.abs(next.y - pan.y) < 1e-9) {
         return pan;
       }
       return next;
     });
-  }, [footprint.h, footprint.w, realPerDisplay, size.h, size.w, viewZoom]);
+  }, [
+    layoutFootprint.h,
+    layoutFootprint.w,
+    realPerDisplay,
+    size.h,
+    size.w,
+    viewZoom,
+  ]);
 
   // Draw enough grid to fill the viewport given the current pan/zoom.
   const gridHaloReal = useMemo(() => {
@@ -413,16 +549,16 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
       Math.ceil(
         Math.max(
           -minCellX,
-          maxCellX - footprint.w,
+          maxCellX - layoutFootprint.w,
           -minCellY,
-          maxCellY - footprint.h,
+          maxCellY - layoutFootprint.h,
           1,
         ),
       ) + 1
     );
   }, [
-    footprint.h,
-    footprint.w,
+    layoutFootprint.h,
+    layoutFootprint.w,
     originPx.x,
     originPx.y,
     pxPerRealCell,
@@ -433,6 +569,43 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
   const activeRect = editOutline
     ? cellRectFromOutline(outline)
     : cellRectFromTransform(imageTransform);
+
+  const displayImage = cropSession?.baseImage ?? imageTransform;
+  const displayCrop = cropSession?.crop ?? {
+    offset: { x: 0, y: 0 },
+    size: { w: footprint.w, h: footprint.h },
+  };
+
+  const commitCrop = useCallback(
+    (
+      baseImage: TokenImageTransform,
+      crop: CellRect,
+      session: {
+        layoutFootprint: { w: number; h: number };
+        baseFootprint: { w: number; h: number };
+        baseOutline: TokenOutlineStyle;
+      },
+    ) => {
+      const nextCrop = clampCropRectInsideImage(crop, baseImage);
+      setCropSession({
+        baseImage,
+        crop: nextCrop,
+        layoutFootprint: session.layoutFootprint,
+        baseFootprint: session.baseFootprint,
+        baseOutline: session.baseOutline,
+      });
+      const next = appearanceFromCropRect(
+        baseImage,
+        nextCrop,
+        session.baseFootprint,
+        session.baseOutline,
+      );
+      onFootprintChange(next.footprint);
+      onImageTransformChange(next.imageTransform);
+      onOutlineChange(next.outline);
+    },
+    [onFootprintChange, onImageTransformChange, onOutlineChange],
+  );
 
   const applyRect = useCallback(
     (rect: { offset: Point; size: { w: number; h: number } }) => {
@@ -446,7 +619,7 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
     [editOutline, onImageTransformChange, onOutlineChange, outline.shape],
   );
 
-  const onPointerDownHandle = (edge: MidEdge, e: React.PointerEvent) => {
+  const onPointerDownHandle = (edge: MidEdge, e: ReactPointerEvent) => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
@@ -460,7 +633,41 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
     };
   };
 
-  const onPointerDownBody = (e: React.PointerEvent) => {
+  const onPointerDownCropCorner = (corner: CropCorner, e: ReactPointerEvent) => {
+    if (e.button !== 0 || !cropSession) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!rootRef.current || pxPerRealCell <= 0) return;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    dragRef.current = {
+      kind: 'cropScale',
+      corner,
+      startCrop: {
+        offset: { ...cropSession.crop.offset },
+        size: { ...cropSession.crop.size },
+      },
+      baseImage: cropSession.baseImage,
+      originLocal: clientToLocal(e.clientX, e.clientY, rootRef.current),
+    };
+  };
+
+  const onPointerDownCropBody = (e: ReactPointerEvent) => {
+    if (e.button !== 0 || !cropSession) return;
+    if (!rootRef.current || pxPerRealCell <= 0) return;
+    rootRef.current.focus();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragRef.current = {
+      kind: 'cropTranslate',
+      startCrop: {
+        offset: { ...cropSession.crop.offset },
+        size: { ...cropSession.crop.size },
+      },
+      baseImage: cropSession.baseImage,
+      originLocal: clientToLocal(e.clientX, e.clientY, rootRef.current),
+    };
+  };
+
+  const onPointerDownBody = (e: ReactPointerEvent) => {
     if (e.button !== 0) return;
     if (!rootRef.current || pxPerRealCell <= 0) return;
     rootRef.current.focus();
@@ -472,7 +679,7 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
     };
   };
 
-  const onPointerDownRoot = (e: React.PointerEvent) => {
+  const onPointerDownRoot = (e: ReactPointerEvent) => {
     if (e.button !== 1) return;
     e.preventDefault();
     if (!rootRef.current || pxPerRealCell <= 0) return;
@@ -485,7 +692,7 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
     };
   };
 
-  const onPointerMove = (e: React.PointerEvent) => {
+  const onPointerMove = (e: ReactPointerEvent) => {
     const drag = dragRef.current;
     if (!drag || !rootRef.current || pxPerRealCell <= 0) return;
     const local = clientToLocal(e.clientX, e.clientY, rootRef.current);
@@ -512,6 +719,33 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
       x: deltaPx.x / pxPerRealCell,
       y: deltaPx.y / pxPerRealCell,
     };
+    if (drag.kind === 'cropScale') {
+      if (!cropSession) return;
+      const aspect = maintainAspect
+        ? drag.startCrop.size.w / Math.max(drag.startCrop.size.h, 1e-6)
+        : undefined;
+      commitCrop(
+        drag.baseImage,
+        scaleCropRectFromCorner(
+          drag.startCrop,
+          drag.corner,
+          deltaCells,
+          maintainAspect,
+          aspect,
+        ),
+        cropSession,
+      );
+      return;
+    }
+    if (drag.kind === 'cropTranslate') {
+      if (!cropSession) return;
+      commitCrop(
+        drag.baseImage,
+        translateCellRect(drag.startCrop, deltaCells),
+        cropSession,
+      );
+      return;
+    }
     if (drag.kind === 'scale') {
       const naturalAspect =
         !editOutline && img && img.naturalHeight > 0
@@ -539,31 +773,52 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
     pxPerRealCell,
     activeRect,
     maintainAspect,
+    cropMode,
+    cropSession,
     editOutline,
     img,
+    footprint,
     applyRect,
+    commitCrop,
   });
   keyStateRef.current = {
     pxPerRealCell,
     activeRect,
     maintainAspect,
+    cropMode,
+    cropSession,
     editOutline,
     img,
+    footprint,
     applyRect,
+    commitCrop,
   };
 
   useImperativeHandle(ref, () => ({
     focus: () => {
       rootRef.current?.focus({ preventScroll: true });
     },
+    recenterCrop: () => {
+      const session = keyStateRef.current.cropSession;
+      if (!session) return;
+      keyStateRef.current.commitCrop(
+        session.baseImage,
+        recenterCropRectOnImage(session.crop, session.baseImage),
+        session,
+      );
+    },
+    finalizeCrop: () => finalizeCropRef.current(),
     handleKeyDown: (e) => {
       const {
         pxPerRealCell: px,
         activeRect: rect,
         maintainAspect: aspectOn,
+        cropMode: cropping,
+        cropSession: session,
         editOutline: outlineMode,
         img: image,
         applyRect: apply,
+        commitCrop: commit,
       } = keyStateRef.current;
       if (px <= 0) return false;
 
@@ -574,6 +829,41 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
         e.key === 'ArrowLeft' ||
         e.key === 'ArrowRight';
       const isSpace = e.key === ' ' || e.code === 'Space';
+
+      if (cropping && session) {
+        if (isArrow) {
+          e.preventDefault();
+        commit(
+          session.baseImage,
+          nudgeCellRect(
+            session.crop,
+            e.key as 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight',
+            pixelStepCells,
+          ),
+          session,
+        );
+        return true;
+      }
+      if (!isSpace) return false;
+      e.preventDefault();
+      const dir = e.shiftKey ? -1 : 1;
+      const edgeDelta = (dir * pixelStepCells) / 2;
+      const aspect = aspectOn
+        ? session.crop.size.w / Math.max(session.crop.size.h, 1e-6)
+        : undefined;
+      commit(
+        session.baseImage,
+        scaleCropRectFromCorner(
+          session.crop,
+          'se',
+          { x: edgeDelta, y: edgeDelta },
+          aspectOn,
+          aspect,
+        ),
+        session,
+      );
+      return true;
+    }
 
       if (isArrow) {
         e.preventDefault();
@@ -628,9 +918,9 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
     if (pxPerRealCell <= 0 || size.w <= 0) return [];
     const lines: { key: string; x1: number; y1: number; x2: number; y2: number }[] = [];
     const minCol = -gridHaloReal;
-    const maxCol = footprint.w + gridHaloReal;
+    const maxCol = layoutFootprint.w + gridHaloReal;
     const minRow = -gridHaloReal;
-    const maxRow = footprint.h + gridHaloReal;
+    const maxRow = layoutFootprint.h + gridHaloReal;
     for (let c = minCol; c <= maxCol; c++) {
       const x = originPx.x + c * pxPerRealCell;
       lines.push({
@@ -653,8 +943,8 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
     }
     return lines;
   }, [
-    footprint.h,
-    footprint.w,
+    layoutFootprint.h,
+    layoutFootprint.w,
     gridHaloReal,
     originPx.x,
     originPx.y,
@@ -817,17 +1107,23 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
               src={imageUrl}
               alt=""
               draggable={false}
-              className={`absolute z-[1] max-h-none max-w-none ${editOutline ? 'pointer-events-none' : 'cursor-move'}`}
+              className={`absolute z-[1] max-h-none max-w-none ${
+                editOutline || cropMode
+                  ? 'pointer-events-none'
+                  : 'cursor-move'
+              }`}
               style={{
-                left: originPx.x + imageTransform.offset.x * pxPerRealCell,
-                top: originPx.y + imageTransform.offset.y * pxPerRealCell,
-                width: imageTransform.size.w * pxPerRealCell,
-                height: imageTransform.size.h * pxPerRealCell,
+                left: originPx.x + displayImage.offset.x * pxPerRealCell,
+                top: originPx.y + displayImage.offset.y * pxPerRealCell,
+                width: displayImage.size.w * pxPerRealCell,
+                height: displayImage.size.h * pxPerRealCell,
                 maxWidth: 'none',
                 maxHeight: 'none',
                 objectFit: 'fill',
               }}
-              onPointerDown={editOutline ? undefined : onPointerDownBody}
+              onPointerDown={
+                editOutline || cropMode ? undefined : onPointerDownBody
+              }
             />
           ) : (
             <div
@@ -843,7 +1139,56 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
             </div>
           )}
 
+          {/* Crop mode: image stays put; move/resize the crop box (grey outside). */}
+          {cropMode && img ? (
+            <>
+              <svg
+                className="pointer-events-none absolute inset-0 z-[2] h-full w-full"
+                aria-hidden
+              >
+                <defs>
+                  <mask id={`${fadeId}-crop-veil`}>
+                    <rect width="100%" height="100%" fill="white" />
+                    <rect
+                      x={originPx.x + displayCrop.offset.x * pxPerRealCell}
+                      y={originPx.y + displayCrop.offset.y * pxPerRealCell}
+                      width={displayCrop.size.w * pxPerRealCell}
+                      height={displayCrop.size.h * pxPerRealCell}
+                      fill="black"
+                    />
+                  </mask>
+                </defs>
+                <rect
+                  width="100%"
+                  height="100%"
+                  fill="rgba(15, 23, 42, 0.62)"
+                  mask={`url(#${fadeId}-crop-veil)`}
+                />
+                <rect
+                  x={originPx.x + displayCrop.offset.x * pxPerRealCell}
+                  y={originPx.y + displayCrop.offset.y * pxPerRealCell}
+                  width={displayCrop.size.w * pxPerRealCell}
+                  height={displayCrop.size.h * pxPerRealCell}
+                  fill="none"
+                  stroke="rgba(226, 232, 240, 0.85)"
+                  strokeWidth={1.5}
+                />
+              </svg>
+              <div
+                className="absolute z-[3] cursor-move"
+                style={{
+                  left: originPx.x + displayCrop.offset.x * pxPerRealCell,
+                  top: originPx.y + displayCrop.offset.y * pxPerRealCell,
+                  width: displayCrop.size.w * pxPerRealCell,
+                  height: displayCrop.size.h * pxPerRealCell,
+                }}
+                onPointerDown={onPointerDownCropBody}
+              />
+            </>
+          ) : null}
+
           {!editOutline &&
+            !cropMode &&
             EDGES.map((edge) => {
               const p = handlePos(edge);
               return (
@@ -860,6 +1205,72 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
                     cursor: edge === 'n' || edge === 's' ? 'ns-resize' : 'ew-resize',
                   }}
                   onPointerDown={(e) => onPointerDownHandle(edge, e)}
+                />
+              );
+            })}
+
+          {cropMode &&
+            CROP_CORNERS.map((corner) => {
+              const p = {
+                x:
+                  corner === 'ne' || corner === 'se'
+                    ? displayCrop.offset.x + displayCrop.size.w
+                    : displayCrop.offset.x,
+                y:
+                  corner === 'sw' || corner === 'se'
+                    ? displayCrop.offset.y + displayCrop.size.h
+                    : displayCrop.offset.y,
+              };
+              const cursor =
+                corner === 'nw' || corner === 'se' ? 'nwse-resize' : 'nesw-resize';
+              const borders: CSSProperties =
+                corner === 'nw'
+                  ? {
+                      borderLeftWidth: CROP_HANDLE_THICK,
+                      borderTopWidth: CROP_HANDLE_THICK,
+                    }
+                  : corner === 'ne'
+                    ? {
+                        borderRightWidth: CROP_HANDLE_THICK,
+                        borderTopWidth: CROP_HANDLE_THICK,
+                      }
+                    : corner === 'sw'
+                      ? {
+                          borderLeftWidth: CROP_HANDLE_THICK,
+                          borderBottomWidth: CROP_HANDLE_THICK,
+                        }
+                      : {
+                          borderRightWidth: CROP_HANDLE_THICK,
+                          borderBottomWidth: CROP_HANDLE_THICK,
+                        };
+              const inset = CROP_HANDLE_THICK;
+              const left =
+                corner === 'ne' || corner === 'se'
+                  ? originPx.x + p.x * pxPerRealCell - CROP_HANDLE_LEN + inset
+                  : originPx.x + p.x * pxPerRealCell - inset;
+              const top =
+                corner === 'sw' || corner === 'se'
+                  ? originPx.y + p.y * pxPerRealCell - CROP_HANDLE_LEN + inset
+                  : originPx.y + p.y * pxPerRealCell - inset;
+              return (
+                <button
+                  key={corner}
+                  type="button"
+                  aria-label={`Crop ${corner}`}
+                  className="absolute z-10 border-sky-200 bg-transparent"
+                  style={{
+                    width: CROP_HANDLE_LEN,
+                    height: CROP_HANDLE_LEN,
+                    left,
+                    top,
+                    cursor,
+                    borderStyle: 'solid',
+                    borderColor: 'rgb(186, 230, 253)',
+                    borderWidth: 0,
+                    boxShadow: '0 0 0 1px rgba(15, 23, 42, 0.55)',
+                    ...borders,
+                  }}
+                  onPointerDown={(e) => onPointerDownCropCorner(corner, e)}
                 />
               );
             })}
@@ -921,12 +1332,14 @@ export const ImportsGridEditor = forwardRef<ImportsGridEditorHandle, Props>(
         {panelFocused ? (
           <div className="absolute bottom-2 left-2 max-w-[75%] rounded bg-slate-950/75 px-1.5 py-0.5 text-[10px] leading-snug text-slate-300">
             <div>Arrows nudge · Space scale up · Shift+Space scale down</div>
+            <div>Crop resize soft-snaps to square when close</div>
             <div>Scroll zoom (cursor) · MMB pan</div>
           </div>
         ) : null}
         <div className="absolute bottom-2 right-2 rounded bg-slate-950/75 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-slate-200">
-          {formatFootprint(imageTransform.size.w)}×
-          {formatFootprint(imageTransform.size.h)} cells
+          {cropMode
+            ? `${formatFootprint(displayCrop.size.w)}×${formatFootprint(displayCrop.size.h)} crop`
+            : `${formatFootprint(imageTransform.size.w)}×${formatFootprint(imageTransform.size.h)} cells`}
         </div>
       </div>
     </div>

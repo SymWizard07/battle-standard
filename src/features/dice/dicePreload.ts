@@ -1,7 +1,8 @@
 import { Group, Mesh, ShaderMaterial, type Camera, type Scene, type WebGLRenderer } from 'three';
 import { dieAccentColor, getDieMeshSpec } from './diceMeshes';
 import { useDieFaceShaderStore } from './dieFaceShaderStore';
-import { getDieFaceTextures } from './dieFaceTextures';
+import { getDieFaceTextures, getDieFaceTexturesFromLayout } from './dieFaceTextures';
+import { defaultDieFaceGlyphLayout } from './dieFaceFonts';
 import { DICE_SIDES, dieScale, FULL_SIZE_DICE_CAP, type DiceSides } from './diceTypes';
 import {
   DEFAULT_DIE_FACE_SHADER,
@@ -66,7 +67,10 @@ export function warmDiceGpuAssets(
   for (const sides of DICE_SIDES) {
     const spec = getDieMeshSpec(sides);
     const color = dieAccentColor(sides);
-    const tex = getDieFaceTextures(sides, color, spec.faces);
+    const layout = defaultDieFaceGlyphLayout(
+      useDieFaceShaderStore.getState().layouts[sides],
+    );
+    const tex = getDieFaceTexturesFromLayout(sides, color, spec.faces, layout);
     const fragment = shaders[sides] ?? DEFAULT_DIE_FACE_SHADER;
     const mat = new ShaderMaterial({
       vertexShader: FACE_SHADER_VERTEX,
@@ -85,7 +89,15 @@ export function warmDiceGpuAssets(
     // Force texture uploads / mip generation on this context.
     for (const sides of DICE_SIDES) {
       const color = dieAccentColor(sides);
-      const tex = getDieFaceTextures(sides, color, getDieMeshSpec(sides).faces);
+      const layout = defaultDieFaceGlyphLayout(
+        useDieFaceShaderStore.getState().layouts[sides],
+      );
+      const tex = getDieFaceTexturesFromLayout(
+        sides,
+        color,
+        getDieMeshSpec(sides).faces,
+        layout,
+      );
       gl.initTexture(tex.map);
       gl.initTexture(tex.normalMap);
     }

@@ -126,6 +126,280 @@ export function coverImageTransform(
   };
 }
 
+/**
+ * Non-destructive crop framing: keep the full image, but ensure it covers the
+ * footprint window and slide/scale so no empty gaps show inside the slot.
+ * Source pixels outside the footprint stay in the transform and can be restored
+ * by panning/zooming later.
+ */
+export function clampImageTransformToCoverFootprint(
+  transform: TokenImageTransform,
+  footprint: { w: number; h: number },
+  naturalAspect?: number,
+): TokenImageTransform {
+  const aspect =
+    naturalAspect != null && naturalAspect > 0
+      ? naturalAspect
+      : transform.size.w / Math.max(transform.size.h, 1e-6);
+
+  const minCover = coverImageTransform(footprint, aspect);
+  let scale = Math.max(
+    transform.size.w / Math.max(minCover.size.w, 1e-6),
+    transform.size.h / Math.max(minCover.size.h, 1e-6),
+    1,
+  );
+  const maxScale = Math.min(
+    TOKEN_IMAGE_FIT_MAX_CELLS / Math.max(minCover.size.w, 1e-6),
+    TOKEN_IMAGE_FIT_MAX_CELLS / Math.max(minCover.size.h, 1e-6),
+  );
+  scale = Math.min(scale, maxScale);
+
+  const w = minCover.size.w * scale;
+  const h = minCover.size.h * scale;
+  // Keep the image's center where it was when size changes (e.g. growing a
+  // 1×1 stretch up to a wide cover). Clamping the old top-left would pin
+  // uneven art to a corner instead of the footprint center.
+  const prevCx = transform.offset.x + transform.size.w / 2;
+  const prevCy = transform.offset.y + transform.size.h / 2;
+  const minX = footprint.w - w;
+  const minY = footprint.h - h;
+  const x = Math.min(0, Math.max(minX, prevCx - w / 2));
+  const y = Math.min(0, Math.max(minY, prevCy - h / 2));
+  return { offset: { x, y }, size: { w, h } };
+}
+
+/** True when the image AABB fully covers the footprint (crop window has no gaps). */
+export function imageTransformCoversFootprint(
+  transform: TokenImageTransform,
+  footprint: { w: number; h: number },
+  eps = 1e-6,
+): boolean {
+  return (
+    transform.offset.x <= eps &&
+    transform.offset.y <= eps &&
+    transform.offset.x + transform.size.w >= footprint.w - eps &&
+    transform.offset.y + transform.size.h >= footprint.h - eps
+  );
+}
+
+export type CropCorner = 'nw' | 'ne' | 'sw' | 'se';
+
+export function cellRectCornerPoint(rect: CellRect, corner: CropCorner): Point {
+  switch (corner) {
+    case 'nw':
+      return { x: rect.offset.x, y: rect.offset.y };
+    case 'ne':
+      return { x: rect.offset.x + rect.size.w, y: rect.offset.y };
+    case 'sw':
+      return { x: rect.offset.x, y: rect.offset.y + rect.size.h };
+    case 'se':
+      return { x: rect.offset.x + rect.size.w, y: rect.offset.y + rect.size.h };
+  }
+}
+
+/** Keep the crop rectangle inside the image AABB. */
+export function clampCropRectInsideImage(
+  crop: CellRect,
+  image: CellRect,
+): CellRect {
+  let w = Math.min(
+    Math.max(TOKEN_IMAGE_FIT_MIN_CELLS, crop.size.w),
+    Math.max(TOKEN_IMAGE_FIT_MIN_CELLS, image.size.w),
+  );
+  let h = Math.min(
+    Math.max(TOKEN_IMAGE_FIT_MIN_CELLS, crop.size.h),
+    Math.max(TOKEN_IMAGE_FIT_MIN_CELLS, image.size.h),
+  );
+  const maxX = image.offset.x + image.size.w - w;
+  const maxY = image.offset.y + image.size.h - h;
+  const x = Math.min(maxX, Math.max(image.offset.x, crop.offset.x));
+  const y = Math.min(maxY, Math.max(image.offset.y, crop.offset.y));
+  return { offset: { x, y }, size: { w, h } };
+}
+
+/**
+ * Cut the crop window out as the new token footprint (1:1, no stretch).
+ * Image placement is rebased so the crop's top-left becomes the footprint origin.
+ * Outline is scaled from the pre-crop footprint into the new size.
+ */
+export function appearanceFromCropRect(
+  baseImage: TokenImageTransform,
+  crop: CellRect,
+  baseFootprint: { w: number; h: number },
+  baseOutline: TokenOutlineStyle,
+): {
+  footprint: { w: number; h: number };
+  imageTransform: TokenImageTransform;
+  outline: TokenOutlineStyle;
+} {
+  const footprint = {
+    w: Math.min(
+      TOKEN_IMAGE_FIT_MAX_CELLS,
+      Math.max(TOKEN_IMAGE_FIT_MIN_CELLS, crop.size.w),
+    ),
+    h: Math.min(
+      TOKEN_IMAGE_FIT_MAX_CELLS,
+      Math.max(TOKEN_IMAGE_FIT_MIN_CELLS, crop.size.h),
+    ),
+  };
+  const imageTransform: TokenImageTransform = {
+    offset: {
+      x: baseImage.offset.x - crop.offset.x,
+      y: baseImage.offset.y - crop.offset.y,
+    },
+    size: { w: baseImage.size.w, h: baseImage.size.h },
+  };
+  const { outline } = scaleAppearanceBetweenFootprints(
+    baseFootprint,
+    footprint,
+    {
+      imageTransform: defaultImageTransform(baseFootprint),
+      outline: baseOutline,
+    },
+  );
+  return { footprint, imageTransform, outline };
+}
+
+/**
+ * Rasterize the crop window out of the source image (cell-space crop over baseImage).
+ * Returns a PNG blob of only the kept pixels.
+ */
+export async function bakeCroppedImageBlob(
+  img: HTMLImageElement,
+  baseImage: TokenImageTransform,
+  crop: CellRect,
+): Promise<Blob> {
+  const nw = img.naturalWidth;
+  const nh = img.naturalHeight;
+  if (nw <= 0 || nh <= 0) {
+    throw new Error('Image has no dimensions');
+  }
+  const bw = Math.max(baseImage.size.w, 1e-6);
+  const bh = Math.max(baseImage.size.h, 1e-6);
+  let sx = ((crop.offset.x - baseImage.offset.x) / bw) * nw;
+  let sy = ((crop.offset.y - baseImage.offset.y) / bh) * nh;
+  let sw = (crop.size.w / bw) * nw;
+  let sh = (crop.size.h / bh) * nh;
+  // Clamp to source bounds.
+  if (sx < 0) {
+    sw += sx;
+    sx = 0;
+  }
+  if (sy < 0) {
+    sh += sy;
+    sy = 0;
+  }
+  sw = Math.min(sw, nw - sx);
+  sh = Math.min(sh, nh - sy);
+  const outW = Math.max(1, Math.round(sw));
+  const outH = Math.max(1, Math.round(sh));
+  const canvas = document.createElement('canvas');
+  canvas.width = outW;
+  canvas.height = outH;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Could not create canvas context');
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error('Crop encode failed'))),
+      'image/png',
+    );
+  });
+}
+
+/** Center the crop box on the image (size unchanged), clamped inside the image. */
+export function recenterCropRectOnImage(
+  crop: CellRect,
+  image: CellRect,
+): CellRect {
+  return clampCropRectInsideImage(
+    {
+      offset: {
+        x: image.offset.x + image.size.w / 2 - crop.size.w / 2,
+        y: image.offset.y + image.size.h / 2 - crop.size.h / 2,
+      },
+      size: { ...crop.size },
+    },
+    image,
+  );
+}
+
+/** Relative |w−h|/max threshold for soft square snap while cropping. */
+export const CROP_SQUARE_SNAP_RATIO = 0.08;
+
+/**
+ * Corner-scale a crop rectangle. Opposite corner stays put unless aspect is locked
+ * (then scale uniformly from the opposite corner).
+ * When unlocked, softly snaps to square once |w−h| / max(w,h) is within `squareSnapRatio`.
+ */
+export function scaleCropRectFromCorner(
+  start: CellRect,
+  corner: CropCorner,
+  deltaCells: Point,
+  maintainAspect: boolean,
+  lockedAspect?: number,
+  squareSnapRatio = CROP_SQUARE_SNAP_RATIO,
+): CellRect {
+  const pivot = cellRectCornerPoint(start, oppositeCropCorner(corner));
+  let x0 = pivot.x;
+  let y0 = pivot.y;
+  let x1 = cellRectCornerPoint(start, corner).x + deltaCells.x;
+  let y1 = cellRectCornerPoint(start, corner).y + deltaCells.y;
+
+  if (maintainAspect) {
+    const aspect =
+      lockedAspect != null && lockedAspect > 0
+        ? lockedAspect
+        : start.size.w / Math.max(start.size.h, 1e-6);
+    // Project free point onto aspect-correct size from pivot.
+    let w = Math.abs(x1 - x0);
+    let h = Math.abs(y1 - y0);
+    if (w / Math.max(h, 1e-6) > aspect) h = w / aspect;
+    else w = h * aspect;
+    x1 = x0 + (x1 >= x0 ? w : -w);
+    y1 = y0 + (y1 >= y0 ? h : -h);
+  } else if (squareSnapRatio > 0) {
+    const w = Math.abs(x1 - x0);
+    const h = Math.abs(y1 - y0);
+    const maxSide = Math.max(w, h, 1e-6);
+    if (Math.abs(w - h) / maxSide <= squareSnapRatio) {
+      // Snap the shorter side up to the longer (one-axis catch), keep pivot.
+      const side = maxSide;
+      x1 = x0 + (x1 >= x0 ? side : -side);
+      y1 = y0 + (y1 >= y0 ? side : -side);
+    }
+  }
+
+  return normalizeRect({
+    offset: { x: Math.min(x0, x1), y: Math.min(y0, y1) },
+    size: { w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) },
+  });
+}
+
+export function oppositeCropCorner(corner: CropCorner): CropCorner {
+  switch (corner) {
+    case 'nw':
+      return 'se';
+    case 'ne':
+      return 'sw';
+    case 'sw':
+      return 'ne';
+    case 'se':
+      return 'nw';
+  }
+}
+
+/** @deprecated footprint corner alias — prefer cellRectCornerPoint on the crop rect. */
+export function footprintCornerPoint(
+  footprint: { w: number; h: number },
+  corner: CropCorner,
+): Point {
+  return cellRectCornerPoint(
+    { offset: { x: 0, y: 0 }, size: { w: footprint.w, h: footprint.h } },
+    corner,
+  );
+}
+
 export function isDefaultImageTransform(
   footprint: { w: number; h: number },
   transform: TokenImageTransform,

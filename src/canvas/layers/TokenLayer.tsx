@@ -329,14 +329,21 @@ const TokenNode = memo(function TokenNode({
           />
         </Group>
       ) : (
-        <Image
-          image={tokenImg}
-          x={imageLocal.x}
-          y={imageLocal.y}
-          width={imageLocal.width}
-          height={imageLocal.height}
+        <Group
           listening={false}
-        />
+          clipFunc={(ctx) => {
+            ctx.rect(0, 0, w, h);
+          }}
+        >
+          <Image
+            image={tokenImg}
+            x={imageLocal.x}
+            y={imageLocal.y}
+            width={imageLocal.width}
+            height={imageLocal.height}
+            listening={false}
+          />
+        </Group>
       )}
       {token.vitalityState === 'dead' ? (
         <Group listening={false}>

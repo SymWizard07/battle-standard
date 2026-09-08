@@ -10,6 +10,16 @@ import {
 } from 'three';
 import type { FaceDef } from './faceRead';
 import type { DiceSides } from './diceTypes';
+import {
+  DEFAULT_DIE_FACE_FONT_ID,
+  DEFAULT_DIE_FACE_FONT_SIZE,
+  DEFAULT_DIE_FACE_OFFSET,
+  clampDieFaceFontSize,
+  clampDieFaceOffset,
+  dieFaceFontFamily,
+  dieFaceFontSizeScale,
+  type DieFaceGlyphLayout,
+} from './dieFaceFonts';
 
 export type DieFaceTextures = {
   map: Texture;
@@ -18,6 +28,18 @@ export type DieFaceTextures = {
 };
 
 const textureCache = new Map<string, DieFaceTextures>();
+
+/** Drop cached atlases (e.g. after a web font finishes loading). */
+export function invalidateDieFaceTextureCache(fontId?: string) {
+  if (fontId == null) {
+    textureCache.clear();
+    return;
+  }
+  const prefix = `v5-white:${fontId}:`;
+  for (const key of [...textureCache.keys()]) {
+    if (key.startsWith(prefix)) textureCache.delete(key);
+  }
+}
 
 export function dieAtlasGrid(faceCount: number): { cols: number } {
   return { cols: Math.max(1, Math.ceil(Math.sqrt(Math.max(1, faceCount)))) };
@@ -79,11 +101,12 @@ function drawCenteredNumber(
   fontPx: number,
   fill: string,
   angleRad = 0,
+  fontFamily = dieFaceFontFamily(DEFAULT_DIE_FACE_FONT_ID),
 ) {
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(angleRad);
-  ctx.font = `700 ${fontPx}px "Segoe UI", system-ui, sans-serif`;
+  ctx.font = `700 ${fontPx}px ${fontFamily}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = fill;
@@ -123,6 +146,10 @@ function paintFaceCell(
   y0: number,
   cell: number,
   sides: DiceSides,
+  fontFamily: string,
+  fontSizeScale: number,
+  offsetXPct: number,
+  offsetYPct: number,
 ) {
   // White field so face color comes from the die shader / material tint.
   albedo.fillStyle = '#ffffff';
@@ -131,6 +158,9 @@ function paintFaceCell(
   height.fillRect(x0, y0, cell, cell);
 
   const ink = '#1e293b';
+  const ox = (offsetXPct / 100) * cell;
+  // +offsetY is up on the face; canvas Y grows down.
+  const oy = -(offsetYPct / 100) * cell;
   const { center, uAxis, vAxis } = faceBasis(face);
   const frame = face.uvFrame ?? {
     uMin: -0.5,
@@ -147,13 +177,13 @@ function paintFaceCell(
     const vN = (d.dot(vAxis) - frame.vMin) / dv;
     // Canvas Y down; vN=1 (glyph up) → top of cell.
     return {
-      x: x0 + uN * cell,
-      y: y0 + (1 - vN) * cell,
+      x: x0 + uN * cell + ox,
+      y: y0 + (1 - vN) * cell + oy,
     };
   };
 
   if (face.cornerLabels && face.cornerLabels.length >= 3) {
-    const fontPx = cell * (sides === 4 ? 0.28 : 0.2);
+    const fontPx = cell * (sides === 4 ? 0.28 : 0.2) * fontSizeScale;
     for (const corner of face.cornerLabels) {
       // Use true corner direction from face center for placement (label pos is inset).
       const toward = new Vector3(corner.align[0], corner.align[1], corner.align[2]).normalize();
@@ -164,19 +194,20 @@ function paintFaceCell(
       const au = toward.dot(uAxis);
       const av = toward.dot(vAxis);
       const rot = Math.atan2(au, av);
-      drawCenteredNumber(albedo, String(corner.value), x, y, fontPx, ink, rot);
-      drawCenteredNumber(height, String(corner.value), x, y, fontPx, '#101010', rot);
+      drawCenteredNumber(albedo, String(corner.value), x, y, fontPx, ink, rot, fontFamily);
+      drawCenteredNumber(height, String(corner.value), x, y, fontPx, '#101010', rot, fontFamily);
     }
   } else {
     const digits = String(face.value);
     const twoDigit = digits.length > 1;
     // d20 faces are small triangles — keep 10–20 inset from the edges.
-    const fontPx = twoDigit
-      ? cell * (sides === 20 ? 0.32 : 0.42)
-      : cell * (sides === 20 ? 0.44 : 0.52);
+    const fontPx =
+      (twoDigit
+        ? cell * (sides === 20 ? 0.32 : 0.42)
+        : cell * (sides === 20 ? 0.44 : 0.52)) * fontSizeScale;
     const { x, y } = toPixel(center);
-    drawCenteredNumber(albedo, digits, x, y, fontPx, ink, 0);
-    drawCenteredNumber(height, digits, x, y, fontPx, '#101010', 0);
+    drawCenteredNumber(albedo, digits, x, y, fontPx, ink, 0, fontFamily);
+    drawCenteredNumber(height, digits, x, y, fontPx, '#101010', 0, fontFamily);
   }
 
   albedo.strokeStyle = 'rgba(15, 23, 42, 0.12)';
@@ -194,8 +225,17 @@ export function getDieFaceTextures(
   sides: DiceSides,
   _bodyColor: string,
   faces: FaceDef[],
+  fontId: string = DEFAULT_DIE_FACE_FONT_ID,
+  fontSizePercent: number = DEFAULT_DIE_FACE_FONT_SIZE,
+  offsetX: number = DEFAULT_DIE_FACE_OFFSET,
+  offsetY: number = DEFAULT_DIE_FACE_OFFSET,
 ): DieFaceTextures {
-  const key = `v4-white:${sides}:${faces
+  const family = dieFaceFontFamily(fontId);
+  const sizePct = clampDieFaceFontSize(fontSizePercent);
+  const sizeScale = dieFaceFontSizeScale(sizePct);
+  const ox = clampDieFaceOffset(offsetX);
+  const oy = clampDieFaceOffset(offsetY);
+  const key = `v5-white:${fontId}:${sizePct}:${ox}:${oy}:${sides}:${faces
     .map((f) => `${f.value}:${f.align?.join(',') ?? ''}`)
     .join('|')}`;
   const hit = textureCache.get(key);
@@ -219,7 +259,19 @@ export function getDieFaceTextures(
   for (let i = 0; i < faces.length; i++) {
     const col = i % cols;
     const row = Math.floor(i / cols);
-    paintFaceCell(aCtx, hCtx, faces[i]!, col * cell, row * cell, cell, sides);
+    paintFaceCell(
+      aCtx,
+      hCtx,
+      faces[i]!,
+      col * cell,
+      row * cell,
+      cell,
+      sides,
+      family,
+      sizeScale,
+      ox,
+      oy,
+    );
   }
 
   const heightData = hCtx.getImageData(0, 0, size, size);
@@ -250,4 +302,21 @@ export function getDieFaceTextures(
   };
   textureCache.set(key, result);
   return result;
+}
+
+export function getDieFaceTexturesFromLayout(
+  sides: DiceSides,
+  bodyColor: string,
+  faces: FaceDef[],
+  layout: DieFaceGlyphLayout,
+): DieFaceTextures {
+  return getDieFaceTextures(
+    sides,
+    bodyColor,
+    faces,
+    layout.fontId,
+    layout.fontSize,
+    layout.offsetX,
+    layout.offsetY,
+  );
 }

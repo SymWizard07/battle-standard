@@ -289,7 +289,9 @@ function handleIncomingMeta(payload: MetaPayload): void {
   const role = useStore.getState().role;
   if (role !== 'player') return;
   if (payload.activeSceneId) {
-    useStore.getState().setActiveScene(payload.activeSceneId as SceneId);
+    useStore.getState().setActiveScene(payload.activeSceneId as SceneId, {
+      fromRemote: true,
+    });
   }
 }
 

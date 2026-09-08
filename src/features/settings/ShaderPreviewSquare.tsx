@@ -3,6 +3,13 @@ import { OrthographicCamera } from '@react-three/drei';
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { ShaderMaterial, type OrthographicCamera as OrthographicCameraType } from 'three';
 import {
+  DEFAULT_DIE_FACE_FONT_ID,
+  DEFAULT_DIE_FACE_FONT_SIZE,
+  DEFAULT_DIE_FACE_OFFSET,
+  DEFAULT_DIE_FACE_SAMPLE,
+  dieFaceFontFamily,
+} from '../dice/dieFaceFonts';
+import {
   FACE_SHADER_STARTER,
   FACE_SHADER_VERTEX,
   createFaceShaderUniforms,
@@ -14,14 +21,36 @@ export { SHADER_PREVIEW_STARTER, SHADER_PREVIEW_VERTEX } from '../dice/faceShade
 type PreviewSceneProps = {
   fragmentSource: string;
   active: boolean;
+  fontId: string;
+  sampleNumber: string;
+  fontSize: number;
+  offsetX: number;
+  offsetY: number;
+  glyphEpoch: number;
   onCompileResult?: (error: string | null) => void;
 };
 
-function PreviewQuad({ fragmentSource, active, onCompileResult }: PreviewSceneProps) {
+function PreviewQuad({
+  fragmentSource,
+  active,
+  fontId,
+  sampleNumber,
+  fontSize,
+  offsetX,
+  offsetY,
+  glyphEpoch,
+  onCompileResult,
+}: PreviewSceneProps) {
   const { gl, scene, camera, size } = useThree();
   const lastGood = useRef(FACE_SHADER_STARTER);
   const material = useMemo(() => {
-    const glyphs = getPreviewGlyphMaps();
+    const glyphs = getPreviewGlyphMaps(
+      dieFaceFontFamily(DEFAULT_DIE_FACE_FONT_ID),
+      DEFAULT_DIE_FACE_SAMPLE,
+      DEFAULT_DIE_FACE_FONT_SIZE,
+      DEFAULT_DIE_FACE_OFFSET,
+      DEFAULT_DIE_FACE_OFFSET,
+    );
     return new ShaderMaterial({
       vertexShader: FACE_SHADER_VERTEX,
       fragmentShader: FACE_SHADER_STARTER,
@@ -34,6 +63,18 @@ function PreviewQuad({ fragmentSource, active, onCompileResult }: PreviewScenePr
   useLayoutEffect(() => {
     material.uniforms.uResolution!.value.set(size.width, size.height);
   }, [material, size.width, size.height]);
+
+  useLayoutEffect(() => {
+    const glyphs = getPreviewGlyphMaps(
+      dieFaceFontFamily(fontId),
+      sampleNumber,
+      fontSize,
+      offsetX,
+      offsetY,
+    );
+    material.uniforms.uAlbedoMap!.value = glyphs.albedo;
+    material.uniforms.uNormalMap!.value = glyphs.normal;
+  }, [fontId, fontSize, glyphEpoch, material, offsetX, offsetY, sampleNumber]);
 
   useLayoutEffect(() => {
     const prevHandler = gl.debug.onShaderError;
@@ -101,6 +142,13 @@ type Props = {
   fragmentSource: string;
   active?: boolean;
   className?: string;
+  fontId?: string;
+  sampleNumber?: string;
+  fontSize?: number;
+  offsetX?: number;
+  offsetY?: number;
+  /** Bump after font load so glyph maps rebuild with the real face. */
+  glyphEpoch?: number;
   onCompileResult?: (error: string | null) => void;
 };
 
@@ -109,6 +157,12 @@ export function ShaderPreviewSquare({
   fragmentSource,
   active = true,
   className,
+  fontId = DEFAULT_DIE_FACE_FONT_ID,
+  sampleNumber = DEFAULT_DIE_FACE_SAMPLE,
+  fontSize = DEFAULT_DIE_FACE_FONT_SIZE,
+  offsetX = DEFAULT_DIE_FACE_OFFSET,
+  offsetY = DEFAULT_DIE_FACE_OFFSET,
+  glyphEpoch = 0,
   onCompileResult,
 }: Props) {
   return (
@@ -138,6 +192,12 @@ export function ShaderPreviewSquare({
         <PreviewQuad
           fragmentSource={fragmentSource}
           active={active}
+          fontId={fontId}
+          sampleNumber={sampleNumber}
+          fontSize={fontSize}
+          offsetX={offsetX}
+          offsetY={offsetY}
+          glyphEpoch={glyphEpoch}
           onCompileResult={onCompileResult}
         />
       </Canvas>
